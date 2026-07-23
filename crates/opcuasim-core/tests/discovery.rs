@@ -23,6 +23,7 @@ async fn lists_advertised_endpoints() {
         anonymous_enabled: true,
         max_sessions: 10,
         max_subscriptions_per_session: 10,
+        ..Default::default()
     };
     server.start(&config, &[], &[]).await.expect("server start");
     tokio::time::sleep(Duration::from_millis(800)).await;

@@ -70,16 +70,19 @@ async fn master_full_flow() {
         anonymous_enabled: true,
         max_sessions: 10,
         max_subscriptions_per_session: 10,
+        ..Default::default()
     };
     let folders = vec![ServerFolder {
         node_id: "Demo".into(),
         display_name: "Demo".into(),
+        browse_name: None,
         parent_id: "i=85".into(),
     }];
     let nodes = vec![
         ServerNode {
             node_id: "Demo.Sine".into(),
             display_name: "Sine".into(),
+            browse_name: None,
             parent_id: "Demo".into(),
             data_type: DataType::Double,
             writable: false,
@@ -89,18 +92,15 @@ async fn master_full_flow() {
                 period_ms: 4000,
                 interval_ms: 200,
             },
-            update_seq: 0,
-            current_value: None,
         },
         ServerNode {
             node_id: "Demo.Setpoint".into(),
             display_name: "Setpoint".into(),
+            browse_name: None,
             parent_id: "Demo".into(),
             data_type: DataType::Double,
             writable: true,
             simulation: SimulationMode::Static { value: "0".into() },
-            update_seq: 0,
-            current_value: None,
         },
     ];
     server
@@ -321,15 +321,18 @@ async fn deadband_reduces_samples() {
         anonymous_enabled: true,
         max_sessions: 10,
         max_subscriptions_per_session: 10,
+        ..Default::default()
     };
     let folders = vec![ServerFolder {
         node_id: "Demo".into(),
         display_name: "Demo".into(),
+        browse_name: None,
         parent_id: "i=85".into(),
     }];
     let nodes = vec![ServerNode {
         node_id: "Demo.Sine".into(),
         display_name: "Sine".into(),
+        browse_name: None,
         parent_id: "Demo".into(),
         data_type: DataType::Double,
         writable: false,
@@ -339,8 +342,6 @@ async fn deadband_reduces_samples() {
             period_ms: 4000,
             interval_ms: 200,
         },
-        update_seq: 0,
-        current_value: None,
     }];
     server.start(&config, &folders, &nodes).await.expect("server start");
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -442,6 +443,7 @@ async fn method_call_echo() {
         anonymous_enabled: true,
         max_sessions: 10,
         max_subscriptions_per_session: 10,
+        ..Default::default()
     };
     server.start(&config, &[], &[]).await.expect("server start");
     tokio::time::sleep(Duration::from_millis(500)).await;

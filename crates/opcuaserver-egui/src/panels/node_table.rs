@@ -122,7 +122,6 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                         .current_values
                         .get(&n.node_id)
                         .map(|s| s.as_str())
-                        .or(n.current_value.as_deref())
                         .unwrap_or("—");
                     ui.monospace(v);
                 });

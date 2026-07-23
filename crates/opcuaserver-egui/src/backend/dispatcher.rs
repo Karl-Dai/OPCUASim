@@ -20,6 +20,15 @@ pub async fn run(
     let state = BackendState::new_shared();
     log::info!("server backend dispatcher started");
 
+    // Initiate graceful shutdown on Ctrl+C so the server can notify clients.
+    let cancel_for_ctrlc = cancel.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            log::info!("Ctrl+C received, initiating server shutdown");
+            cancel_for_ctrlc.cancel();
+        }
+    });
+
     tokio::spawn(status_timer(
         state.clone(),
         event_tx.clone(),
@@ -106,6 +115,7 @@ async fn handle_cmd(
             let folder = ServerFolder {
                 node_id,
                 display_name,
+                browse_name: None,
                 parent_id,
             };
             if let Some(nm) = state.server.node_manager().await {
@@ -125,12 +135,11 @@ async fn handle_cmd(
             let node = ServerNode {
                 node_id: req.node_id,
                 display_name: req.display_name,
+                browse_name: None,
                 parent_id: req.parent_id,
                 data_type: req.data_type,
                 writable: req.writable,
                 simulation: req.simulation,
-                update_seq: 0,
-                current_value: None,
             };
             if let Some(nm) = state.server.node_manager().await {
                 let ns = state.server.namespace_index().await;
@@ -238,7 +247,6 @@ fn build_address_space_event(state: &Arc<BackendState>) -> BackendEvent {
                 data_type: n.data_type.clone(),
                 writable: n.writable,
                 simulation: n.simulation.clone(),
-                current_value: n.current_value.clone(),
             })
             .collect(),
     };

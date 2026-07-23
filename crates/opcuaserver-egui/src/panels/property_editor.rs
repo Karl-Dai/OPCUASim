@@ -50,7 +50,6 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
             .current_values
             .get(&node.node_id)
             .cloned()
-            .or_else(|| node.current_value.clone())
             .unwrap_or_else(|| "—".to_string());
         ui.label(
             egui::RichText::new(current)

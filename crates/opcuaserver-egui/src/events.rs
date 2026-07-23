@@ -79,5 +79,4 @@ pub struct NodeRow {
     pub data_type: DataType,
     pub writable: bool,
     pub simulation: SimulationMode,
-    pub current_value: Option<String>,
 }

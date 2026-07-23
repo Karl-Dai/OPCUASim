@@ -1,3 +1,4 @@
+use evalexpr::ContextWithMutableVariables;
 use rand::Rng;
 
 use super::models::{DataType, SimulationMode};
@@ -26,9 +27,10 @@ pub fn generate_value(mode: &SimulationMode, elapsed_secs: f64, iteration: u64) 
                 }
                 super::models::LinearMode::Bounce => {
                     let pos = (raw - min) / range;
-                    let cycle = pos.floor() as i64;
                     let frac = pos - pos.floor();
-                    if cycle % 2 == 0 {
+                    // Use f64 modulo to avoid i64 overflow on extreme iterations.
+                    let cycle = pos.floor().rem_euclid(2.0);
+                    if cycle < 1.0 {
                         Some(min + frac * range)
                     } else {
                         Some(max - frac * range)
@@ -36,9 +38,17 @@ pub fn generate_value(mode: &SimulationMode, elapsed_secs: f64, iteration: u64) 
                 }
             }
         }
-        SimulationMode::Script { .. } => {
-            // Phase 2: evalexpr integration
-            Some(0.0)
+        SimulationMode::Script { expression, .. } => {
+            let mut context = evalexpr::HashMapContext::new();
+            let _ = context.set_value("t".into(), evalexpr::Value::Float(elapsed_secs));
+            let _ = context.set_value("iteration".into(), evalexpr::Value::Float(iteration as f64));
+            match evalexpr::eval_number_with_context(expression, &context) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    log::warn!("Script expression '{}' eval failed: {}", expression, e);
+                    None
+                }
+            }
         }
     }
 }
