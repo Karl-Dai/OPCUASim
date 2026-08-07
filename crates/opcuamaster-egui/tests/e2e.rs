@@ -115,8 +115,11 @@ async fn master_full_flow() {
 
     // --- Boot Master backend ---
     let ctx = egui::Context::default();
-    let (backend, mut rx) =
-        BackendHandle::new(ctx, "e2e-master", opcuamaster_egui::backend::dispatcher::run);
+    let (backend, mut rx) = BackendHandle::new(
+        ctx,
+        "e2e-master",
+        opcuamaster_egui::backend::dispatcher::run,
+    );
 
     let mut saw_log = false;
 
@@ -151,7 +154,10 @@ async fn master_full_flow() {
     }));
 
     let conn_id = loop {
-        let ev = recv_until(&mut rx, 5, &mut saw_log, |e| matches!(e, BackendEvent::Connections(_))).await;
+        let ev = recv_until(&mut rx, 5, &mut saw_log, |e| {
+            matches!(e, BackendEvent::Connections(_))
+        })
+        .await;
         if let BackendEvent::Connections(list) = ev {
             if let Some(c) = list.into_iter().find(|c| c.name == "e2e") {
                 break c.id;
@@ -161,10 +167,37 @@ async fn master_full_flow() {
 
     // --- 2. Connect ---
     backend.send(UiCommand::Connect(conn_id.clone()));
-    let _ = recv_until(&mut rx, 8, &mut saw_log, |e| {
-        matches!(e, BackendEvent::ConnectionStateChanged { state, .. } if state == "Connected")
+    let _ = recv_until(
+        &mut rx,
+        8,
+        &mut saw_log,
+        |e| matches!(e, BackendEvent::ConnectionStateChanged { state, .. } if state == "Connected"),
+    )
+    .await;
+
+    // --- 2b. EU Range: the simulator server exposes EURange on variables ---
+    let eu_prop_id = "ns=2;s=Demo.Sine_EURange";
+    backend.send(UiCommand::ReadAttrs {
+        conn_id: conn_id.clone(),
+        node_id: eu_prop_id.into(),
+        req_id: 99,
+    });
+    let eu_ev = recv_until(&mut rx, 5, &mut saw_log, |e| {
+        matches!(e, BackendEvent::NodeAttrs { req_id: 99, .. })
     })
     .await;
+    let BackendEvent::NodeAttrs { attrs, .. } = eu_ev else {
+        unreachable!()
+    };
+    assert!(
+        attrs
+            .value
+            .as_deref()
+            .map(|v| v.contains("0") && v.contains("100"))
+            .unwrap_or(false),
+        "expected EURange [0,100], got {:?}",
+        attrs.value
+    );
 
     // --- 3. BrowseRoot (which browses Objects i=85) -> find Demo ---
     backend.send(UiCommand::BrowseRoot {
@@ -175,7 +208,10 @@ async fn master_full_flow() {
         matches!(e, BackendEvent::BrowseResult { req_id: 1, .. })
     })
     .await;
-    let BackendEvent::BrowseResult { items: root_items, .. } = root_ev else {
+    let BackendEvent::BrowseResult {
+        items: root_items, ..
+    } = root_ev
+    else {
         unreachable!()
     };
     let demo = root_items
@@ -184,7 +220,10 @@ async fn master_full_flow() {
         .unwrap_or_else(|| {
             panic!(
                 "Demo folder not found under Objects; got: {:?}",
-                root_items.iter().map(|i| &i.display_name).collect::<Vec<_>>()
+                root_items
+                    .iter()
+                    .map(|i| &i.display_name)
+                    .collect::<Vec<_>>()
             )
         });
 
@@ -285,6 +324,45 @@ async fn master_full_flow() {
         attrs.value
     );
 
+    // --- 6b. Percent deadband subscription against simulator server must succeed ---
+    backend.send(UiCommand::AddMonitoredNodes {
+        conn_id: conn_id.clone(),
+        nodes: vec![MonitoredNodeReq {
+            node_id: "ns=2;s=Demo.Sine".into(),
+            display_name: "Sine".into(),
+            data_type: Some("Double".into()),
+            access_mode: "Subscription".into(),
+            interval_ms: 500.0,
+            filter: Some(DataChangeFilterReq {
+                trigger: DataChangeTriggerKindReq::StatusValue,
+                deadband_kind: DeadbandKindReq::Percent,
+                deadband_value: 5.0,
+            }),
+        }],
+    });
+    let mut percent_snap = false;
+    let pd_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    while tokio::time::Instant::now() < pd_deadline && !percent_snap {
+        let ev = tokio::time::timeout(Duration::from_millis(500), rx.recv())
+            .await
+            .ok()
+            .flatten();
+        if let Some(BackendEvent::CommLogEntries { entries, .. }) = &ev {
+            if !entries.is_empty() {
+                saw_log = true;
+            }
+        }
+        if let Some(BackendEvent::MonitoredSnapshot { nodes, .. }) = ev {
+            if nodes.iter().any(|n| n.node_id == "ns=2;s=Demo.Sine") {
+                percent_snap = true;
+            }
+        }
+    }
+    assert!(
+        percent_snap,
+        "expected MonitoredSnapshot with Sine after percent-deadband subscription"
+    );
+
     // --- 7. Ensure a CommLog batch was observed during the session ---
     // The log_timer fires every 1.5s; connect produces log entries and any recv_until above
     // captures them into saw_log. If we have not seen one yet, wait briefly for the next tick.
@@ -300,7 +378,10 @@ async fn master_full_flow() {
             }
         }
     }
-    assert!(saw_log, "expected at least one CommLog batch during session");
+    assert!(
+        saw_log,
+        "expected at least one CommLog batch during session"
+    );
 
     // --- 8. Clean shutdown (drop BackendHandle off the async context) ---
     tokio::task::spawn_blocking(move || drop(backend))
@@ -348,12 +429,18 @@ async fn deadband_reduces_samples() {
         eu_range_low: 0.0,
         eu_range_high: 100.0,
     }];
-    server.start(&config, &folders, &nodes).await.expect("server start");
+    server
+        .start(&config, &folders, &nodes)
+        .await
+        .expect("server start");
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let ctx = egui::Context::default();
-    let (backend, mut rx) =
-        BackendHandle::new(ctx, "deadband-master", opcuamaster_egui::backend::dispatcher::run);
+    let (backend, mut rx) = BackendHandle::new(
+        ctx,
+        "deadband-master",
+        opcuamaster_egui::backend::dispatcher::run,
+    );
 
     let mut saw_log = false;
     backend.send(UiCommand::CreateConnection(CreateConnectionReq {
@@ -365,7 +452,10 @@ async fn deadband_reduces_samples() {
         timeout_ms: 5000,
     }));
     let conn_id = loop {
-        let ev = recv_until(&mut rx, 5, &mut saw_log, |e| matches!(e, BackendEvent::Connections(_))).await;
+        let ev = recv_until(&mut rx, 5, &mut saw_log, |e| {
+            matches!(e, BackendEvent::Connections(_))
+        })
+        .await;
         if let BackendEvent::Connections(list) = ev {
             if let Some(c) = list.into_iter().find(|c| c.name == "deadband") {
                 break c.id;
@@ -373,9 +463,12 @@ async fn deadband_reduces_samples() {
         }
     };
     backend.send(UiCommand::Connect(conn_id.clone()));
-    let _ = recv_until(&mut rx, 8, &mut saw_log, |e| {
-        matches!(e, BackendEvent::ConnectionStateChanged { state, .. } if state == "Connected")
-    })
+    let _ = recv_until(
+        &mut rx,
+        8,
+        &mut saw_log,
+        |e| matches!(e, BackendEvent::ConnectionStateChanged { state, .. } if state == "Connected"),
+    )
     .await;
 
     backend.send(UiCommand::AddMonitoredNodes {
@@ -458,8 +551,11 @@ async fn method_call_echo() {
     let method_id_str = format!("{method_id}");
 
     let ctx = egui::Context::default();
-    let (backend, mut rx) =
-        BackendHandle::new(ctx, "echo-master", opcuamaster_egui::backend::dispatcher::run);
+    let (backend, mut rx) = BackendHandle::new(
+        ctx,
+        "echo-master",
+        opcuamaster_egui::backend::dispatcher::run,
+    );
 
     let mut saw_log = false;
     backend.send(UiCommand::CreateConnection(CreateConnectionReq {
@@ -471,7 +567,10 @@ async fn method_call_echo() {
         timeout_ms: 5000,
     }));
     let conn_id = loop {
-        let ev = recv_until(&mut rx, 5, &mut saw_log, |e| matches!(e, BackendEvent::Connections(_))).await;
+        let ev = recv_until(&mut rx, 5, &mut saw_log, |e| {
+            matches!(e, BackendEvent::Connections(_))
+        })
+        .await;
         if let BackendEvent::Connections(list) = ev {
             if let Some(c) = list.into_iter().find(|c| c.name == "echo") {
                 break c.id;
@@ -479,9 +578,12 @@ async fn method_call_echo() {
         }
     };
     backend.send(UiCommand::Connect(conn_id.clone()));
-    let _ = recv_until(&mut rx, 8, &mut saw_log, |e| {
-        matches!(e, BackendEvent::ConnectionStateChanged { state, .. } if state == "Connected")
-    })
+    let _ = recv_until(
+        &mut rx,
+        8,
+        &mut saw_log,
+        |e| matches!(e, BackendEvent::ConnectionStateChanged { state, .. } if state == "Connected"),
+    )
     .await;
 
     backend.send(UiCommand::ReadMethodArgs {
@@ -514,10 +616,16 @@ async fn method_call_echo() {
         matches!(e, BackendEvent::MethodCallResult { req_id: 31, .. })
     })
     .await;
-    let BackendEvent::MethodCallResult { status, outputs, .. } = call_ev else {
+    let BackendEvent::MethodCallResult {
+        status, outputs, ..
+    } = call_ev
+    else {
         unreachable!()
     };
-    assert!(status.contains("Good"), "expected Good status, got {status}");
+    assert!(
+        status.contains("Good"),
+        "expected Good status, got {status}"
+    );
     assert_eq!(outputs.len(), 1, "expected 1 output, got {outputs:?}");
     assert!(
         outputs[0].value.contains("hello"),
