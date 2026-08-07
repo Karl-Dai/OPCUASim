@@ -32,7 +32,6 @@ pub struct OpcUaServer {
     state: Arc<RwLock<ServerState>>,
     handle: Arc<RwLock<Option<ServerHandle>>>,
     node_manager: Arc<RwLock<Option<Arc<InMemoryNodeManager<HistoryNodeManagerImpl>>>>>,
-    history_store: Arc<RwLock<Option<Arc<HistoryStore>>>>,
     simulation_engine: Arc<RwLock<Option<Arc<SimulationEngine>>>>,
     namespace_index: Arc<RwLock<u16>>,
 }
@@ -196,7 +195,6 @@ impl OpcUaServer {
             state: Arc::new(RwLock::new(ServerState::Stopped)),
             handle: Arc::new(RwLock::new(None)),
             node_manager: Arc::new(RwLock::new(None)),
-            history_store: Arc::new(RwLock::new(None)),
             simulation_engine: Arc::new(RwLock::new(None)),
             namespace_index: Arc::new(RwLock::new(2)),
         }
@@ -242,7 +240,6 @@ impl OpcUaServer {
         *self.namespace_index.write().await = ns_index;
         *self.handle.write().await = Some(handle);
         *self.node_manager.write().await = Some(sim_nm.clone());
-        *self.history_store.write().await = Some(history.clone());
 
         // Start simulation engine
         let sim_engine = Arc::new(SimulationEngine::new());
@@ -252,7 +249,9 @@ impl OpcUaServer {
         *self.simulation_engine.write().await = Some(sim_engine.clone());
 
         // Register preset demo methods
-        let _ = super::methods::register_demo_methods(self, subscriptions).await;
+        if let Err(e) = super::methods::register_demo_methods(self, subscriptions).await {
+            log::warn!("Failed to register preset demo methods: {e}");
+        }
 
         // Run server in background task
         let state = self.state.clone();

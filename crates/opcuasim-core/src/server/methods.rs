@@ -6,7 +6,8 @@ use opcua_nodes::MethodBuilder;
 use opcua_server::node_manager::memory::InMemoryNodeManager;
 use opcua_server::SubscriptionCache;
 use opcua_types::{
-    Argument, DataTypeId, DataValue, LocalizedText, NodeId, ObjectId, StatusCode, UAString, Variant,
+    Argument, DataTypeId, DataValue, DateTime, LocalizedText, NodeId, ObjectId, StatusCode,
+    UAString, Variant,
 };
 
 use super::history_node_manager::HistoryNodeManagerImpl;
@@ -108,7 +109,10 @@ pub async fn register_demo_methods(
                     )))]);
                 }
             };
-            let dv = DataValue::new_now(Variant::Double(value));
+            let now = DateTime::now();
+            let mut dv = DataValue::new_now(Variant::Double(value));
+            dv.source_timestamp = Some(now);
+            dv.server_timestamp = Some(now);
             match nm_for_set.set_value(&*subs_for_set, &nid, None, dv) {
                 Ok(()) => Ok(vec![Variant::String(UAString::from("Good"))]),
                 Err(e) => Ok(vec![Variant::String(UAString::from(format!("{}", e)))]),
