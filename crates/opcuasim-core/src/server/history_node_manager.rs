@@ -164,7 +164,9 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
         address_space: &RwLock<AddressSpace>,
         nodes: &mut [&mut RegisterNodeItem],
     ) -> Result<(), StatusCode> {
-        self.inner.register_nodes(context, address_space, nodes).await
+        self.inner
+            .register_nodes(context, address_space, nodes)
+            .await
     }
 
     async fn unregister_nodes(
@@ -263,7 +265,9 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
             node.set_result(HistoryData {
                 data_values: Some(values),
             });
-            node.set_next_continuation_point(next_skip.map(|s| ContinuationPoint::new(Box::new(s))));
+            node.set_next_continuation_point(
+                next_skip.map(|s| ContinuationPoint::new(Box::new(s))),
+            );
             node.set_status(StatusCode::Good);
         }
         Ok(())

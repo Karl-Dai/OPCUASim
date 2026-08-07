@@ -6,7 +6,10 @@ use tokio::sync::RwLock;
 use opcua_crypto::SecurityPolicy;
 use opcua_server::address_space::AddressSpace;
 use opcua_server::diagnostics::NamespaceMetadata;
-use opcua_server::node_manager::memory::{InMemoryNodeManager, InMemoryNodeManagerBuilder, InMemoryNodeManagerImplBuilder, SimpleNodeManagerBuilder};
+use opcua_server::node_manager::memory::{
+    InMemoryNodeManager, InMemoryNodeManagerBuilder, InMemoryNodeManagerImplBuilder,
+    SimpleNodeManagerBuilder,
+};
 use opcua_server::node_manager::ServerContext;
 use opcua_server::{
     Server, ServerBuilder, ServerHandle, ServerUserToken, SubscriptionCache,
@@ -146,7 +149,9 @@ fn build_server(
     let sim_nm = node_managers
         .get_of_type::<InMemoryNodeManager<HistoryNodeManagerImpl>>()
         .ok_or_else(|| {
-            OpcUaSimError::ServerError("InMemoryNodeManager<HistoryNodeManagerImpl> not found".into())
+            OpcUaSimError::ServerError(
+                "InMemoryNodeManager<HistoryNodeManagerImpl> not found".into(),
+            )
         })?;
 
     let ns_index = {

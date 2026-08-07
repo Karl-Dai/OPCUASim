@@ -49,7 +49,11 @@ impl HistoryStore {
         };
         let mut in_range: Vec<&DataValue> = buf
             .iter()
-            .filter(|dv| sample_time(dv).map(|t| t >= start && t <= end).unwrap_or(false))
+            .filter(|dv| {
+                sample_time(dv)
+                    .map(|t| t >= start && t <= end)
+                    .unwrap_or(false)
+            })
             .collect();
         let total = in_range.len();
         if skip >= total {

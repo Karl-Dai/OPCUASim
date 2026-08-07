@@ -67,7 +67,10 @@ async fn preset_methods_are_callable() {
     .await
     .expect("echo");
     assert!(
-        outcome.outputs.first().is_some_and(|v| matches!(v, Variant::String(s) if s.to_string() == "hello")),
+        outcome
+            .outputs
+            .first()
+            .is_some_and(|v| matches!(v, Variant::String(s) if s.to_string() == "hello")),
         "Echo output mismatch: {:?}",
         outcome.outputs
     );
@@ -82,7 +85,10 @@ async fn preset_methods_are_callable() {
     .await
     .expect("add");
     assert!(
-        outcome.outputs.first().is_some_and(|v| matches!(v, Variant::Double(val) if (*val - 5.0).abs() < 1e-9)),
+        outcome
+            .outputs
+            .first()
+            .is_some_and(|v| matches!(v, Variant::Double(val) if (*val - 5.0).abs() < 1e-9)),
         "Add output mismatch: {:?}",
         outcome.outputs
     );
@@ -97,7 +103,10 @@ async fn preset_methods_are_callable() {
     .await
     .expect("random");
     assert!(
-        outcome.outputs.first().is_some_and(|v| matches!(v, Variant::Double(val) if *val >= 0.0 && *val < 100.0)),
+        outcome
+            .outputs
+            .first()
+            .is_some_and(|v| matches!(v, Variant::Double(val) if *val >= 0.0 && *val < 100.0)),
         "RandomValue output out of [0, 100): {:?}",
         outcome.outputs
     );
@@ -116,7 +125,10 @@ async fn preset_methods_are_callable() {
     .await
     .expect("setnodevalue");
     assert!(
-        outcome.outputs.first().is_some_and(|v| matches!(v, Variant::String(s) if !s.is_empty())),
+        outcome
+            .outputs
+            .first()
+            .is_some_and(|v| matches!(v, Variant::String(s) if !s.is_empty())),
         "SetNodeValue status should be non-empty: {:?}",
         outcome.outputs
     );

@@ -86,7 +86,10 @@ pub async fn register_demo_methods(
         ns,
         "Demo.SetNodeValue",
         "SetNodeValue",
-        &[arg("node_id", DataTypeId::String), arg("value", DataTypeId::Double)],
+        &[
+            arg("node_id", DataTypeId::String),
+            arg("value", DataTypeId::Double),
+        ],
         &[arg("status", DataTypeId::String)],
         move |inputs: &[Variant]| {
             let node_id_str = match inputs.first() {
@@ -108,10 +111,7 @@ pub async fn register_demo_methods(
             let dv = DataValue::new_now(Variant::Double(value));
             match nm_for_set.set_value(&*subs_for_set, &nid, None, dv) {
                 Ok(()) => Ok(vec![Variant::String(UAString::from("Good"))]),
-                Err(e) => Ok(vec![Variant::String(UAString::from(format!(
-                    "{}",
-                    e
-                )))]),
+                Err(e) => Ok(vec![Variant::String(UAString::from(format!("{}", e)))]),
             }
         },
     ));
