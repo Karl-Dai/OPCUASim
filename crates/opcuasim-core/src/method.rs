@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use opcua_client::Session;
 use opcua_types::{
-    Argument, AttributeId, BrowseDescription, BrowseDirection, BrowseResultMask,
-    CallMethodRequest, DataValue, ExtensionObject, NodeClassMask, NodeId, NumericRange,
-    QualifiedName, ReadValueId, ReferenceTypeId, StatusCode, TimestampsToReturn, Variant,
+    Argument, AttributeId, BrowseDescription, BrowseDirection, BrowseResultMask, CallMethodRequest,
+    DataValue, ExtensionObject, NodeClassMask, NodeId, NumericRange, QualifiedName, ReadValueId,
+    ReferenceTypeId, StatusCode, TimestampsToReturn, Variant,
 };
 
 use crate::error::OpcUaSimError;
@@ -39,10 +39,9 @@ pub async fn read_method_arguments(
         result_mask: BrowseResultMask::All as u32,
     }];
 
-    let results = session
-        .browse(&browse, 0, None)
-        .await
-        .map_err(|e| OpcUaSimError::SubscriptionError(format!("Browse method props failed: {e}")))?;
+    let results = session.browse(&browse, 0, None).await.map_err(|e| {
+        OpcUaSimError::SubscriptionError(format!("Browse method props failed: {e}"))
+    })?;
 
     let mut input_id: Option<NodeId> = None;
     let mut output_id: Option<NodeId> = None;

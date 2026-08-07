@@ -42,9 +42,9 @@ impl ServerApp {
             )
         });
         if cmd_s {
-            if let Some(path) = opcuaegui_shared::widgets::pick_save_project_path(
-                "server.opcuaproj",
-            ) {
+            if let Some(path) =
+                opcuaegui_shared::widgets::pick_save_project_path("server.opcuaproj")
+            {
                 self.backend.send(UiCommand::SaveProject(path));
             }
         }

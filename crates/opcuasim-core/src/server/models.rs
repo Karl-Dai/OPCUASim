@@ -35,6 +35,21 @@ impl DataType {
             DataType::ByteString => 15,
         }
     }
+
+    /// Whether the type is a numeric type that can carry an EU Range.
+    pub fn is_numeric(&self) -> bool {
+        matches!(
+            self,
+            DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::Float
+                | DataType::Double
+        )
+    }
 }
 
 impl std::fmt::Display for DataType {
@@ -54,11 +69,32 @@ pub enum LinearMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SimulationMode {
-    Static { value: String },
-    Random { min: f64, max: f64, interval_ms: u64 },
-    Sine { amplitude: f64, offset: f64, period_ms: u64, interval_ms: u64 },
-    Linear { start: f64, step: f64, min: f64, max: f64, mode: LinearMode, interval_ms: u64 },
-    Script { expression: String, interval_ms: u64 },
+    Static {
+        value: String,
+    },
+    Random {
+        min: f64,
+        max: f64,
+        interval_ms: u64,
+    },
+    Sine {
+        amplitude: f64,
+        offset: f64,
+        period_ms: u64,
+        interval_ms: u64,
+    },
+    Linear {
+        start: f64,
+        step: f64,
+        min: f64,
+        max: f64,
+        mode: LinearMode,
+        interval_ms: u64,
+    },
+    Script {
+        expression: String,
+        interval_ms: u64,
+    },
 }
 
 impl SimulationMode {
@@ -76,7 +112,9 @@ impl SimulationMode {
 
 impl Default for SimulationMode {
     fn default() -> Self {
-        SimulationMode::Static { value: "0".to_string() }
+        SimulationMode::Static {
+            value: "0".to_string(),
+        }
     }
 }
 
@@ -91,6 +129,16 @@ pub struct ServerNode {
     pub simulation: SimulationMode,
     pub update_seq: u64,
     pub current_value: Option<String>,
+    /// EU Range property (low). Default 0.0; required for Percent deadband.
+    #[serde(default)]
+    pub eu_range_low: f64,
+    /// EU Range property (high). Default 100.0; required for Percent deadband.
+    #[serde(default = "default_eu_range_high")]
+    pub eu_range_high: f64,
+}
+
+fn default_eu_range_high() -> f64 {
+    100.0
 }
 
 /// A folder node in the server address space.

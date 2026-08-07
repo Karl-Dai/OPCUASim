@@ -53,13 +53,16 @@ impl SimulationEngine {
             }
             let opcua_node_id = super::address_space::parse_node_id(&node.node_id)
                 .unwrap_or_else(|_| NodeId::new(namespace_index, node.node_id.as_str()));
-            states.insert(node.node_id.clone(), NodeSimState {
-                node_id_str: node.node_id.clone(),
-                data_type: node.data_type.clone(),
-                simulation: node.simulation.clone(),
-                opcua_node_id,
-                iteration: 0,
-            });
+            states.insert(
+                node.node_id.clone(),
+                NodeSimState {
+                    node_id_str: node.node_id.clone(),
+                    data_type: node.data_type.clone(),
+                    simulation: node.simulation.clone(),
+                    opcua_node_id,
+                    iteration: 0,
+                },
+            );
         }
     }
 
@@ -85,7 +88,10 @@ impl SimulationEngine {
             }
             drop(states);
 
-            info!("SimulationEngine starting: {} interval groups", groups.len());
+            info!(
+                "SimulationEngine starting: {} interval groups",
+                groups.len()
+            );
 
             let mut handles = Vec::new();
             let start_time = Instant::now();
@@ -171,7 +177,8 @@ impl SimulationEngine {
     pub async fn get_values_since(&self, since_seq: u64) -> (Vec<(String, String)>, u64) {
         let cv = self.current_values.read().await;
         let seq = *self.update_seq.read().await;
-        let changed: Vec<(String, String)> = cv.iter()
+        let changed: Vec<(String, String)> = cv
+            .iter()
             .filter(|(_, (_, s))| *s > since_seq)
             .map(|(nid, (val, _))| (nid.clone(), val.clone()))
             .collect();

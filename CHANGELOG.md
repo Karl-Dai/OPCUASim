@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Master auto-reconnect now actually re-establishes the session and restores subscriptions/polling after a drop
+- Polling mode now performs real OPC UA reads at the configured interval
+- Browse fully follows continuation points (no more truncated reference lists)
+- History reads release pending continuation points on early exit
+- Server variables expose an `EURange` property, enabling percent deadband filters
+
+### Added
+
+- Editable EU Range (low/high) for server variables in the property editor
+
 ## [0.4.0] - 2026-05-02
 
 ### Highlights / 亮点

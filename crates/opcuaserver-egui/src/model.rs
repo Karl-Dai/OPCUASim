@@ -6,8 +6,14 @@ use crate::events::{AddressSpaceDto, ServerStatus};
 
 #[derive(Debug, Clone)]
 pub enum AddressChild {
-    Folder { node_id: String, display_name: String },
-    Node { node_id: String, display_name: String },
+    Folder {
+        node_id: String,
+        display_name: String,
+    },
+    Node {
+        node_id: String,
+        display_name: String,
+    },
 }
 
 pub struct AppModel {
@@ -123,6 +129,8 @@ pub struct AddNodeForm {
     pub linear_bounce: bool,
     pub script_expr: String,
     pub script_interval_ms: u64,
+    pub eu_range_low: f64,
+    pub eu_range_high: f64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -159,6 +167,8 @@ impl Default for AddNodeForm {
             linear_bounce: false,
             script_expr: String::from("t * 0.1"),
             script_interval_ms: 1000,
+            eu_range_low: 0.0,
+            eu_range_high: 100.0,
         }
     }
 }

@@ -51,12 +51,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
         ui.separator();
         let selected_count = model.monitor.selected_rows.len();
         if selected_count > 0 {
-            status_chip(
-                ui,
-                theme::ACCENT(),
-                "▣",
-                &format!("已选 {selected_count}"),
-            );
+            status_chip(ui, theme::ACCENT(), "▣", &format!("已选 {selected_count}"));
             if ui
                 .button("🗑 移除选中")
                 .on_hover_text("Delete / Backspace")
@@ -79,7 +74,10 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                 ui.menu_button("➕ 加入分组", |ui| {
                     let groups = model.groups.clone();
                     for g in &groups {
-                        if ui.button(format!("{} ({})", g.name, g.node_ids.len())).clicked() {
+                        if ui
+                            .button(format!("{} ({})", g.name, g.node_ids.len()))
+                            .clicked()
+                        {
                             let ids: Vec<String> =
                                 model.monitor.selected_rows.iter().cloned().collect();
                             backend.send(UiCommand::AddNodesToGroup {
@@ -146,7 +144,9 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
 
     table
         .header(22.0, |mut header| {
-            for label in ["NodeId", "Name", "Type", "Value", "Quality", "Src TS", "Srv TS", "Mode"] {
+            for label in [
+                "NodeId", "Name", "Type", "Value", "Quality", "Src TS", "Srv TS", "Mode",
+            ] {
                 header.col(|ui| {
                     ui.strong(label);
                 });
@@ -217,7 +217,10 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
         });
 
     match action {
-        Some(RowAction::Click { filtered_idx, node_id }) => {
+        Some(RowAction::Click {
+            filtered_idx,
+            node_id,
+        }) => {
             if shift_held {
                 if let Some(anchor) = model.monitor.last_clicked_filtered_idx {
                     let (lo, hi) = if anchor <= filtered_idx {
@@ -259,13 +262,11 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
             model.value_panel.write_value.clear();
             model.value_panel.last_result = None;
         }
-        Some(RowAction::History { node_id, display_name }) => {
-            crate::panels::browse_panel::open_history_tab(
-                model,
-                &conn_id,
-                &node_id,
-                &display_name,
-            );
+        Some(RowAction::History {
+            node_id,
+            display_name,
+        }) => {
+            crate::panels::browse_panel::open_history_tab(model, &conn_id, &node_id, &display_name);
         }
         None => {}
     }

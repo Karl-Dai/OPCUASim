@@ -15,12 +15,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
         );
         ui.separator();
         if model.connections.is_empty() {
-            empty_state(
-                ui,
-                "🔌",
-                "暂无连接",
-                Some("点击工具栏 ➕ 新建连接"),
-            );
+            empty_state(ui, "🔌", "暂无连接", Some("点击工具栏 ➕ 新建连接"));
         } else {
             let mut clicked: Option<String> = None;
             for conn in &model.connections {
@@ -33,12 +28,9 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                             .strong()
                             .color(theme::TEXT_PRIMARY()),
                     );
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            status_chip(ui, color, icon, label);
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        status_chip(ui, color, icon, label);
+                    });
                     r
                 });
                 if resp.inner.clicked() {
@@ -84,9 +76,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
             let enabled = !model.group_input.trim().is_empty();
             ui.add_enabled_ui(enabled, |ui| {
                 if ui.button("➕").on_hover_text("新建分组").clicked() {
-                    backend.send(UiCommand::CreateGroup(
-                        model.group_input.trim().to_string(),
-                    ));
+                    backend.send(UiCommand::CreateGroup(model.group_input.trim().to_string()));
                     model.group_input.clear();
                 }
             });
@@ -101,22 +91,18 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
             for g in &model.groups {
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(format!("· {}", g.name))
-                            .color(theme::TEXT_PRIMARY()),
+                        egui::RichText::new(format!("· {}", g.name)).color(theme::TEXT_PRIMARY()),
                     );
                     ui.label(
                         egui::RichText::new(format!("({})", g.node_ids.len()))
                             .small()
                             .color(theme::TEXT_MUTED()),
                     );
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if ui.small_button("🗑").on_hover_text("删除分组").clicked() {
-                                backend.send(UiCommand::DeleteGroup(g.id.clone()));
-                            }
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("🗑").on_hover_text("删除分组").clicked() {
+                            backend.send(UiCommand::DeleteGroup(g.id.clone()));
+                        }
+                    });
                 });
             }
         }

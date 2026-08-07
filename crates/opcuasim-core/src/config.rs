@@ -1,12 +1,18 @@
-use serde::{Deserialize, Serialize};
 use crate::node::{AccessMode, NodeGroup};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum AuthConfig {
     #[default]
     Anonymous,
-    UserPassword { username: String, password: String },
-    Certificate { cert_path: String, key_path: String },
+    UserPassword {
+        username: String,
+        password: String,
+    },
+    Certificate {
+        cert_path: String,
+        key_path: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,7 +104,9 @@ mod tests {
             monitored_nodes: vec![MonitoredNodeConfig {
                 node_id: "ns=2;s=Temperature".to_string(),
                 display_name: "Temperature".to_string(),
-                access_mode: AccessMode::Subscription { interval_ms: 1000.0 },
+                access_mode: AccessMode::Subscription {
+                    interval_ms: 1000.0,
+                },
                 group_id: None,
             }],
         });
@@ -112,7 +120,10 @@ mod tests {
         let parsed = ProjectFile::from_json(&json).unwrap();
         assert_eq!(parsed.project_type, "OpcUaMaster");
         assert_eq!(parsed.connections.len(), 1);
-        assert_eq!(parsed.connections[0].monitored_nodes[0].node_id, "ns=2;s=Temperature");
+        assert_eq!(
+            parsed.connections[0].monitored_nodes[0].node_id,
+            "ns=2;s=Temperature"
+        );
         assert_eq!(parsed.groups.len(), 1);
     }
 
@@ -124,7 +135,8 @@ mod tests {
         let user = serde_json::to_string(&AuthConfig::UserPassword {
             username: "admin".to_string(),
             password: "pass".to_string(),
-        }).unwrap();
+        })
+        .unwrap();
         assert!(user.contains("admin"));
     }
 }

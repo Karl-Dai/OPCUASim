@@ -25,3 +25,4 @@ pem = "3"
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
+env_logger.workspace = true

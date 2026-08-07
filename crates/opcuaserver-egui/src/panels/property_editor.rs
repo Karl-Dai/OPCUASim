@@ -40,6 +40,35 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                     data_type: None,
                     writable: Some(w),
                     simulation: None,
+                    eu_range_low: None,
+                    eu_range_high: None,
+                });
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("EU Range:")
+                    .small()
+                    .color(theme::TEXT_MUTED()),
+            );
+            let mut low = node.eu_range_low;
+            let mut high = node.eu_range_high;
+            // Use `|` not `||` (non-short-circuit): both DragValues must render every
+            // frame; `||` would skip the second add() call when the first changed.
+            if ui
+                .add(egui::DragValue::new(&mut low).speed(0.1).range(-1e9..=1e9))
+                .changed()
+                | ui.add(egui::DragValue::new(&mut high).speed(0.1).range(-1e9..=1e9))
+                    .changed()
+            {
+                backend.send(UiCommand::UpdateNode {
+                    node_id: node.node_id.clone(),
+                    display_name: None,
+                    data_type: None,
+                    writable: None,
+                    simulation: None,
+                    eu_range_low: Some(low),
+                    eu_range_high: Some(high),
                 });
             }
         });
@@ -70,6 +99,8 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                 data_type: None,
                 writable: None,
                 simulation: Some(sim),
+                eu_range_low: None,
+                eu_range_high: None,
             });
         }
     });
@@ -112,10 +143,8 @@ fn edit_simulation(ui: &mut egui::Ui, sim: &mut SimulationMode) -> bool {
                     commit |= drag_commit(ui, egui::DragValue::new(max));
                     ui.end_row();
                     ui.label("Interval (ms)");
-                    commit |= drag_commit(
-                        ui,
-                        egui::DragValue::new(interval_ms).range(50..=3_600_000),
-                    );
+                    commit |=
+                        drag_commit(ui, egui::DragValue::new(interval_ms).range(50..=3_600_000));
                     ui.end_row();
                 });
         }
@@ -138,16 +167,10 @@ fn edit_simulation(ui: &mut egui::Ui, sim: &mut SimulationMode) -> bool {
                 commit |= drag_commit(ui, egui::DragValue::new(offset));
                 ui.end_row();
                 ui.label("Period (ms)");
-                commit |= drag_commit(
-                    ui,
-                    egui::DragValue::new(period_ms).range(50..=86_400_000),
-                );
+                commit |= drag_commit(ui, egui::DragValue::new(period_ms).range(50..=86_400_000));
                 ui.end_row();
                 ui.label("Interval (ms)");
-                commit |= drag_commit(
-                    ui,
-                    egui::DragValue::new(interval_ms).range(50..=3_600_000),
-                );
+                commit |= drag_commit(ui, egui::DragValue::new(interval_ms).range(50..=3_600_000));
                 ui.end_row();
             });
         }
@@ -181,10 +204,7 @@ fn edit_simulation(ui: &mut egui::Ui, sim: &mut SimulationMode) -> bool {
                     ui.end_row();
                     ui.label("Mode");
                     let mut bounce = matches!(mode, LinearMode::Bounce);
-                    if ui
-                        .checkbox(&mut bounce, "Bounce (else Repeat)")
-                        .changed()
-                    {
+                    if ui.checkbox(&mut bounce, "Bounce (else Repeat)").changed() {
                         *mode = if bounce {
                             LinearMode::Bounce
                         } else {
@@ -194,10 +214,8 @@ fn edit_simulation(ui: &mut egui::Ui, sim: &mut SimulationMode) -> bool {
                     }
                     ui.end_row();
                     ui.label("Interval (ms)");
-                    commit |= drag_commit(
-                        ui,
-                        egui::DragValue::new(interval_ms).range(50..=3_600_000),
-                    );
+                    commit |=
+                        drag_commit(ui, egui::DragValue::new(interval_ms).range(50..=3_600_000));
                     ui.end_row();
                 });
         }
@@ -218,10 +236,7 @@ fn edit_simulation(ui: &mut egui::Ui, sim: &mut SimulationMode) -> bool {
             );
             ui.horizontal(|ui| {
                 ui.label("Interval (ms)");
-                commit |= drag_commit(
-                    ui,
-                    egui::DragValue::new(interval_ms).range(50..=3_600_000),
-                );
+                commit |= drag_commit(ui, egui::DragValue::new(interval_ms).range(50..=3_600_000));
             });
             if ui.button("应用").clicked() {
                 commit = true;

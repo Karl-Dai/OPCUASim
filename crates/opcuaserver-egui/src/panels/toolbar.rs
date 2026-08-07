@@ -1,8 +1,8 @@
-use opcuasim_core::server::models::DataType;
 use opcuaegui_shared::theme;
 use opcuaegui_shared::widgets::{
     pick_open_project_path, pick_save_project_path, status_chip, OBJECTS_ROOT_ID,
 };
+use opcuasim_core::server::models::DataType;
 
 use crate::events::{AddNodeReq, UiCommand};
 use crate::model::{AppModel, SimKind};
@@ -48,46 +48,35 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
         );
         ui.monospace(&model.status.endpoint_url);
 
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                let mode = opcuaegui_shared::theme::current_mode();
-                let (label, hint) = match mode {
-                    opcuaegui_shared::theme::ThemeMode::Dark => ("🌞", "切换到浅色主题"),
-                    opcuaegui_shared::theme::ThemeMode::Light => ("🌙", "切换到暗色主题"),
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mode = opcuaegui_shared::theme::current_mode();
+            let (label, hint) = match mode {
+                opcuaegui_shared::theme::ThemeMode::Dark => ("🌞", "切换到浅色主题"),
+                opcuaegui_shared::theme::ThemeMode::Light => ("🌙", "切换到暗色主题"),
+            };
+            if ui.button(label).on_hover_text(hint).clicked() {
+                let next = match mode {
+                    opcuaegui_shared::theme::ThemeMode::Dark => {
+                        opcuaegui_shared::theme::ThemeMode::Light
+                    }
+                    opcuaegui_shared::theme::ThemeMode::Light => {
+                        opcuaegui_shared::theme::ThemeMode::Dark
+                    }
                 };
-                if ui.button(label).on_hover_text(hint).clicked() {
-                    let next = match mode {
-                        opcuaegui_shared::theme::ThemeMode::Dark => {
-                            opcuaegui_shared::theme::ThemeMode::Light
-                        }
-                        opcuaegui_shared::theme::ThemeMode::Light => {
-                            opcuaegui_shared::theme::ThemeMode::Dark
-                        }
-                    };
-                    opcuaegui_shared::theme::set_mode(next);
-                    opcuaegui_shared::theme::apply(ui.ctx());
+                opcuaegui_shared::theme::set_mode(next);
+                opcuaegui_shared::theme::apply(ui.ctx());
+            }
+            if ui.button("📂 打开").on_hover_text("Cmd/Ctrl+O").clicked() {
+                if let Some(path) = pick_open_project_path() {
+                    backend.send(UiCommand::LoadProject(path));
                 }
-                if ui
-                    .button("📂 打开")
-                    .on_hover_text("Cmd/Ctrl+O")
-                    .clicked()
-                {
-                    if let Some(path) = pick_open_project_path() {
-                        backend.send(UiCommand::LoadProject(path));
-                    }
+            }
+            if ui.button("💾 保存").on_hover_text("Cmd/Ctrl+S").clicked() {
+                if let Some(path) = pick_save_project_path("server.opcuaproj") {
+                    backend.send(UiCommand::SaveProject(path));
                 }
-                if ui
-                    .button("💾 保存")
-                    .on_hover_text("Cmd/Ctrl+S")
-                    .clicked()
-                {
-                    if let Some(path) = pick_save_project_path("server.opcuaproj") {
-                        backend.send(UiCommand::SaveProject(path));
-                    }
-                }
-            },
-        );
+            }
+        });
     });
 
     ui.add_space(4.0);
@@ -186,6 +175,8 @@ fn add_node_form(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandl
                 data_type: form.data_type.clone(),
                 writable: form.writable,
                 simulation: form.build_simulation(),
+                eu_range_low: form.eu_range_low,
+                eu_range_high: form.eu_range_high,
             }));
             form.display_name.clear();
             form.node_id.clear();

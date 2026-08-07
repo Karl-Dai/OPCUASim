@@ -1,12 +1,10 @@
+use log::{info, warn};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use log::{info, warn};
 
 use opcua_client::{ClientBuilder, IdentityToken, Session};
-use opcua_types::{
-    EndpointDescription, MessageSecurityMode, UserTokenPolicy,
-};
+use opcua_types::{EndpointDescription, MessageSecurityMode, UserTokenPolicy};
 
 use crate::config::{AuthConfig, ConnectionConfig};
 use crate::error::OpcUaSimError;
@@ -115,8 +113,12 @@ impl OpcUaConnection {
             "Basic128Rsa15" => "http://opcfoundation.org/UA/SecurityPolicy#Basic128Rsa15",
             "Basic256" => "http://opcfoundation.org/UA/SecurityPolicy#Basic256",
             "Basic256Sha256" => "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256",
-            "Aes128_Sha256_RsaOaep" => "http://opcfoundation.org/UA/SecurityPolicy#Aes128_Sha256_RsaOaep",
-            "Aes256_Sha256_RsaPss" => "http://opcfoundation.org/UA/SecurityPolicy#Aes256_Sha256_RsaPss",
+            "Aes128_Sha256_RsaOaep" => {
+                "http://opcfoundation.org/UA/SecurityPolicy#Aes128_Sha256_RsaOaep"
+            }
+            "Aes256_Sha256_RsaPss" => {
+                "http://opcfoundation.org/UA/SecurityPolicy#Aes256_Sha256_RsaPss"
+            }
             _ => "http://opcfoundation.org/UA/SecurityPolicy#None",
         }
     }
@@ -128,21 +130,51 @@ impl OpcUaConnection {
             AuthConfig::UserPassword { username, password } => {
                 IdentityToken::new_user_name(username.clone(), password.clone())
             }
-            AuthConfig::Certificate { cert_path, key_path } => {
-                match IdentityToken::new_x509_path(cert_path, key_path) {
-                    Ok(token) => token,
-                    Err(e) => {
-                        warn!("Failed to load X509 certificate: {}. Falling back to anonymous.", e);
-                        IdentityToken::Anonymous
-                    }
+            AuthConfig::Certificate {
+                cert_path,
+                key_path,
+            } => match IdentityToken::new_x509_path(cert_path, key_path) {
+                Ok(token) => token,
+                Err(e) => {
+                    warn!(
+                        "Failed to load X509 certificate: {}. Falling back to anonymous.",
+                        e
+                    );
+                    IdentityToken::Anonymous
                 }
-            }
+            },
         }
     }
 
     pub async fn connect(&self) -> Result<(), OpcUaSimError> {
         self.set_state(ConnectionState::Connecting).await;
-        self.log_request("Session", &format!("Connecting to {}", self.config.endpoint_url));
+        self.log_request(
+            "Session",
+            &format!("Connecting to {}", self.config.endpoint_url),
+        );
+        let result = self.connect_impl().await;
+        if result.is_err() {
+            self.set_state(ConnectionState::Disconnected).await;
+        }
+        result
+    }
+
+    /// Actual connection work. Idempotent: if a session already exists and its
+    /// event loop is still running, returns Ok immediately.
+    async fn connect_impl(&self) -> Result<(), OpcUaSimError> {
+        // Idempotency guard: reuse an alive session
+        {
+            let s = self.session.read().await;
+            if s.is_some() {
+                let h = self.event_loop_handle.read().await;
+                if let Some(handle) = h.as_ref() {
+                    if !handle.is_finished() {
+                        self.set_state(ConnectionState::Connected).await;
+                        return Ok(());
+                    }
+                }
+            }
+        }
 
         info!("Connecting to OPC UA server: {}", self.config.endpoint_url);
 
@@ -152,6 +184,9 @@ impl OpcUaConnection {
             .application_uri("urn:OPCUAMaster")
             .create_sample_keypair(true)
             .trust_server_certs(true)
+            // session_retry_limit(-1): async-opcua's internal event loop retries the
+            // session forever, so it handles reconnection by itself. start_reconnect_loop
+            // is defense-in-depth for the rare case where the internal retry gives up.
             .session_retry_limit(-1)
             .keep_alive_interval(std::time::Duration::from_secs(5))
             .request_timeout(std::time::Duration::from_secs(30))
@@ -174,13 +209,15 @@ impl OpcUaConnection {
             security_policy_uri,
             security_mode,
             UserTokenPolicy::anonymous(),
-        ).into();
+        )
+            .into();
 
         // Try endpoint discovery with 10s timeout, fall back to direct connection
         let connect_result = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             client.connect_to_matching_endpoint(endpoint.clone(), identity_token.clone()),
-        ).await;
+        )
+        .await;
 
         let (session, event_loop) = match connect_result {
             Ok(Ok(result)) => result,
@@ -206,13 +243,16 @@ impl OpcUaConnection {
         let wait_result = tokio::time::timeout(
             std::time::Duration::from_millis(timeout_ms),
             session.wait_for_connection(),
-        ).await;
+        )
+        .await;
 
         if wait_result.is_err() {
             // Timeout — abort event loop and fail
             handle.abort();
-            self.set_state(ConnectionState::Disconnected).await;
-            let msg = format!("Connection timeout after {}ms to {}", timeout_ms, self.config.endpoint_url);
+            let msg = format!(
+                "Connection timeout after {}ms to {}",
+                timeout_ms, self.config.endpoint_url
+            );
             self.log_response("Session", &msg, Some("BadTimeout"));
             return Err(OpcUaSimError::ConnectionFailed(msg));
         }
@@ -284,11 +324,13 @@ impl OpcUaConnection {
     /// Get a clone of the event_loop_handle Arc, for external monitoring.
     /// The caller can use `JoinHandle::is_finished()` to detect when the
     /// OPC UA event loop has stopped (e.g. server dropped the connection).
-    pub fn get_event_loop_handle_holder(&self) -> Arc<RwLock<Option<JoinHandle<opcua_types::StatusCode>>>> {
+    pub fn get_event_loop_handle_holder(
+        &self,
+    ) -> Arc<RwLock<Option<JoinHandle<opcua_types::StatusCode>>>> {
         self.event_loop_handle.clone()
     }
 
-    pub async fn start_reconnect_loop<F>(&self, on_state_change: F)
+    pub async fn start_reconnect_loop<F>(self: &Arc<Self>, on_state_change: F)
     where
         F: Fn(ConnectionState) + Send + Sync + 'static,
     {
@@ -296,6 +338,7 @@ impl OpcUaConnection {
         let reconnect_state = self.reconnect_state.clone();
         let policy = self.reconnect_policy.clone();
         let endpoint = self.config.endpoint_url.clone();
+        let this = self.clone();
 
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
         {
@@ -306,6 +349,22 @@ impl OpcUaConnection {
         tokio::spawn(async move {
             let mut attempt: u32 = 0;
             loop {
+                let alive = {
+                    let s = this.session.read().await;
+                    let mut alive = false;
+                    if s.is_some() {
+                        let h = this.event_loop_handle.read().await;
+                        alive = h.as_ref().map(|h| !h.is_finished()).unwrap_or(false);
+                    }
+                    alive
+                };
+                if alive {
+                    tokio::select! {
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => continue,
+                        _ = &mut rx => { info!("Reconnect loop cancelled"); return; }
+                    }
+                }
+
                 if !policy.should_retry(attempt) {
                     *reconnect_state.write().await = ReconnectState::GaveUp;
                     warn!("Gave up reconnecting to {}", endpoint);
@@ -326,7 +385,18 @@ impl OpcUaConnection {
                 }
 
                 info!("Reconnect attempt {} to {}", attempt + 1, endpoint);
-                attempt += 1;
+                match this.connect_impl().await {
+                    Ok(()) => {
+                        attempt = 0;
+                        *reconnect_state.write().await = ReconnectState::Idle;
+                        *state.write().await = ConnectionState::Connected;
+                        on_state_change(ConnectionState::Connected);
+                    }
+                    Err(e) => {
+                        warn!("Reconnect attempt {} failed: {}", attempt + 1, e);
+                        attempt += 1;
+                    }
+                }
             }
         });
     }

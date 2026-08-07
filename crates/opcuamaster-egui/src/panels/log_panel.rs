@@ -9,10 +9,7 @@ use crate::runtime::BackendHandle;
 pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
     let Some(conn_id) = model.selected_conn.clone() else {
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("通信日志 (未选择连接)")
-                    .color(theme::TEXT_MUTED()),
-            );
+            ui.label(egui::RichText::new("通信日志 (未选择连接)").color(theme::TEXT_MUTED()));
         });
         return;
     };
@@ -180,7 +177,11 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                     );
                 });
                 row.col(|ui| {
-                    let glyph = if entry.direction == "Request" { "→" } else { "←" };
+                    let glyph = if entry.direction == "Request" {
+                        "→"
+                    } else {
+                        "←"
+                    };
                     ui.colored_label(dir_color, format!("{glyph} {}", entry.direction));
                 });
                 row.col(|ui| {

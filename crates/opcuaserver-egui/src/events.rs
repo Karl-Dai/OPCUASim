@@ -20,6 +20,8 @@ pub enum UiCommand {
         data_type: Option<DataType>,
         writable: Option<bool>,
         simulation: Option<SimulationMode>,
+        eu_range_low: Option<f64>,
+        eu_range_high: Option<f64>,
     },
     LoadProject(std::path::PathBuf),
     SaveProject(std::path::PathBuf),
@@ -33,15 +35,23 @@ pub struct AddNodeReq {
     pub data_type: DataType,
     pub writable: bool,
     pub simulation: SimulationMode,
+    pub eu_range_low: f64,
+    pub eu_range_high: f64,
 }
 
 #[derive(Debug, Clone)]
 pub enum BackendEvent {
     Status(ServerStatus),
     AddressSpace(AddressSpaceDto),
-    SimValues { seq: u64, values: Vec<(String, String)> },
+    SimValues {
+        seq: u64,
+        values: Vec<(String, String)>,
+    },
     Config(ServerConfig),
-    Toast { level: ToastLevel, message: String },
+    Toast {
+        level: ToastLevel,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,4 +90,6 @@ pub struct NodeRow {
     pub writable: bool,
     pub simulation: SimulationMode,
     pub current_value: Option<String>,
+    pub eu_range_low: f64,
+    pub eu_range_high: f64,
 }

@@ -8,7 +8,9 @@ pub enum AccessMode {
 
 impl Default for AccessMode {
     fn default() -> Self {
-        AccessMode::Subscription { interval_ms: 1000.0 }
+        AccessMode::Subscription {
+            interval_ms: 1000.0,
+        }
     }
 }
 
@@ -58,7 +60,12 @@ pub struct MonitoredNode {
 }
 
 impl MonitoredNode {
-    pub fn new(node_id: String, display_name: String, browse_path: String, data_type: String) -> Self {
+    pub fn new(
+        node_id: String,
+        display_name: String,
+        browse_path: String,
+        data_type: String,
+    ) -> Self {
         Self {
             node_id,
             display_name,

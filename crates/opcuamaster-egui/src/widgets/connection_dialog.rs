@@ -76,9 +76,7 @@ impl ConnDialogState {
             return Err("Endpoint URL 不能为空".into());
         }
         if !url.starts_with("opc.tcp://") {
-            return Err(
-                "Endpoint URL 必须以 opc.tcp:// 开头（OPC UA 不支持 http/https）".into(),
-            );
+            return Err("Endpoint URL 必须以 opc.tcp:// 开头（OPC UA 不支持 http/https）".into());
         }
         let auth = match self.auth {
             AuthKind::Anonymous => AuthKindReq::Anonymous,
@@ -121,11 +119,7 @@ pub struct DialogActions {
 
 /// Renders the dialog. Returns DialogActions describing what the user did.
 /// Sets `close` to true if the user chose to cancel or submitted successfully.
-pub fn show(
-    ctx: &egui::Context,
-    state: &mut ConnDialogState,
-    close: &mut bool,
-) -> DialogActions {
+pub fn show(ctx: &egui::Context, state: &mut ConnDialogState, close: &mut bool) -> DialogActions {
     let mut actions = DialogActions {
         submit: None,
         discover: None,
@@ -149,8 +143,7 @@ pub fn show(
                     ui.label("Endpoint URL");
                     ui.horizontal(|ui| {
                         let url_trim = state.endpoint_url.trim();
-                        let scheme_ok = url_trim.is_empty()
-                            || url_trim.starts_with("opc.tcp://");
+                        let scheme_ok = url_trim.is_empty() || url_trim.starts_with("opc.tcp://");
                         let mut edit = egui::TextEdit::singleline(&mut state.endpoint_url)
                             .desired_width(280.0);
                         if !scheme_ok {
@@ -165,15 +158,11 @@ pub fn show(
                         } else {
                             "发现"
                         };
-                        let resp = ui.add_enabled(
-                            !state.discovery_in_flight,
-                            egui::Button::new(btn_label),
-                        );
+                        let resp = ui
+                            .add_enabled(!state.discovery_in_flight, egui::Button::new(btn_label));
                         if resp.clicked() {
-                            actions.discover = Some((
-                                state.endpoint_url.trim().to_string(),
-                                state.timeout_ms,
-                            ));
+                            actions.discover =
+                                Some((state.endpoint_url.trim().to_string(), state.timeout_ms));
                         }
                     });
                     ui.end_row();
@@ -234,9 +223,7 @@ pub fn show(
                             ui.text_edit_singleline(&mut state.username);
                             ui.end_row();
                             ui.label("密码");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.password).password(true),
-                            );
+                            ui.add(egui::TextEdit::singleline(&mut state.password).password(true));
                             ui.end_row();
                         }
                         AuthKind::Certificate => {
@@ -286,9 +273,7 @@ pub fn show(
                                 row.col(|ui| {
                                     let selected = state.security_policy == ep.security_policy
                                         && state.security_mode == ep.security_mode;
-                                    if ui
-                                        .selectable_label(selected, &ep.security_policy)
-                                        .clicked()
+                                    if ui.selectable_label(selected, &ep.security_policy).clicked()
                                     {
                                         state.security_policy = ep.security_policy.clone();
                                         state.security_mode = ep.security_mode.clone();
