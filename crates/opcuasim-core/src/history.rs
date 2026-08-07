@@ -69,16 +69,43 @@ pub async fn history_read_raw(
             .and_then(|hd| hd.data_values)
             .unwrap_or_default();
 
-        for dv in dvs {
-            out.push(map_data_value(dv));
-            if out.len() as u32 >= max_values {
-                break;
+        let reached_max = {
+            let mut reached = false;
+            for dv in dvs {
+                out.push(map_data_value(dv));
+                if out.len() as u32 >= max_values {
+                    reached = true;
+                    break;
+                }
             }
-        }
+            reached
+        };
 
-        if out.len() as u32 >= max_values || result.continuation_point.is_null() {
+        // All data consumed and server has no more pages: done.
+        if result.continuation_point.is_null() {
             break;
         }
+
+        // Reached the caller's max_values with a pending continuation point:
+        // release it server-side per OPC UA Part 4 5.10.3.
+        if reached_max {
+            let release_nodes = vec![HistoryReadValueId {
+                node_id: node_id.clone(),
+                index_range: NumericRange::None,
+                data_encoding: QualifiedName::null(),
+                continuation_point: result.continuation_point.clone(),
+            }];
+            let release_action =
+                HistoryReadAction::ReadRawModifiedDetails(ReadRawModifiedDetails::default());
+            if let Err(e) = session
+                .history_read(release_action, TimestampsToReturn::Neither, true, &release_nodes)
+                .await
+            {
+                log::warn!("Failed to release history continuation point: {e}");
+            }
+            break;
+        }
+
         continuation_point = result.continuation_point;
     }
 
