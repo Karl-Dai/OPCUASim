@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
+use tokio::sync::RwLock as TokioRwLock;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -341,7 +342,7 @@ async fn create_connection(
             ConnectionEntry {
                 connection,
                 subscription_mgr: SubscriptionManager::new(),
-                polling_mgr: PollingManager::new(),
+                polling_mgr: PollingManager::new(Arc::new(TokioRwLock::new(None))),
             },
         );
     }
@@ -877,7 +878,7 @@ async fn load_project(
                 ConnectionEntry {
                     connection: OpcUaConnection::new(config),
                     subscription_mgr: SubscriptionManager::new(),
-                    polling_mgr: PollingManager::new(),
+                    polling_mgr: PollingManager::new(Arc::new(TokioRwLock::new(None))),
                 },
             );
         }
