@@ -143,6 +143,29 @@ impl OpcUaConnection {
     pub async fn connect(&self) -> Result<(), OpcUaSimError> {
         self.set_state(ConnectionState::Connecting).await;
         self.log_request("Session", &format!("Connecting to {}", self.config.endpoint_url));
+        let result = self.connect_impl().await;
+        if result.is_err() {
+            self.set_state(ConnectionState::Disconnected).await;
+        }
+        result
+    }
+
+    /// Actual connection work. Idempotent: if a session already exists and its
+    /// event loop is still running, returns Ok immediately.
+    async fn connect_impl(&self) -> Result<(), OpcUaSimError> {
+        // Idempotency guard: reuse an alive session
+        {
+            let s = self.session.read().await;
+            if s.is_some() {
+                let h = self.event_loop_handle.read().await;
+                if let Some(handle) = h.as_ref() {
+                    if !handle.is_finished() {
+                        self.set_state(ConnectionState::Connected).await;
+                        return Ok(());
+                    }
+                }
+            }
+        }
 
         info!("Connecting to OPC UA server: {}", self.config.endpoint_url);
 
@@ -211,7 +234,6 @@ impl OpcUaConnection {
         if wait_result.is_err() {
             // Timeout — abort event loop and fail
             handle.abort();
-            self.set_state(ConnectionState::Disconnected).await;
             let msg = format!("Connection timeout after {}ms to {}", timeout_ms, self.config.endpoint_url);
             self.log_response("Session", &msg, Some("BadTimeout"));
             return Err(OpcUaSimError::ConnectionFailed(msg));
@@ -288,7 +310,7 @@ impl OpcUaConnection {
         self.event_loop_handle.clone()
     }
 
-    pub async fn start_reconnect_loop<F>(&self, on_state_change: F)
+    pub async fn start_reconnect_loop<F>(self: &Arc<Self>, on_state_change: F)
     where
         F: Fn(ConnectionState) + Send + Sync + 'static,
     {
@@ -296,6 +318,7 @@ impl OpcUaConnection {
         let reconnect_state = self.reconnect_state.clone();
         let policy = self.reconnect_policy.clone();
         let endpoint = self.config.endpoint_url.clone();
+        let this = self.clone();
 
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
         {
@@ -306,6 +329,22 @@ impl OpcUaConnection {
         tokio::spawn(async move {
             let mut attempt: u32 = 0;
             loop {
+                let alive = {
+                    let s = this.session.read().await;
+                    let mut alive = false;
+                    if s.is_some() {
+                        let h = this.event_loop_handle.read().await;
+                        alive = h.as_ref().map(|h| !h.is_finished()).unwrap_or(false);
+                    }
+                    alive
+                };
+                if alive {
+                    tokio::select! {
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => continue,
+                        _ = &mut rx => { info!("Reconnect loop cancelled"); return; }
+                    }
+                }
+
                 if !policy.should_retry(attempt) {
                     *reconnect_state.write().await = ReconnectState::GaveUp;
                     warn!("Gave up reconnecting to {}", endpoint);
@@ -326,7 +365,18 @@ impl OpcUaConnection {
                 }
 
                 info!("Reconnect attempt {} to {}", attempt + 1, endpoint);
-                attempt += 1;
+                match this.connect_impl().await {
+                    Ok(()) => {
+                        attempt = 0;
+                        *reconnect_state.write().await = ReconnectState::Idle;
+                        *state.write().await = ConnectionState::Connected;
+                        on_state_change(ConnectionState::Connected);
+                    }
+                    Err(e) => {
+                        warn!("Reconnect attempt {} failed: {}", attempt + 1, e);
+                        attempt += 1;
+                    }
+                }
             }
         });
     }
