@@ -45,12 +45,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
         });
 }
 
-fn render_children(
-    ui: &mut egui::Ui,
-    parent: &str,
-    model: &mut AppModel,
-    backend: &BackendHandle,
-) {
+fn render_children(ui: &mut egui::Ui, parent: &str, model: &mut AppModel, backend: &BackendHandle) {
     // Snapshot the children list for this parent so we can recurse into a
     // mutable borrow of `model` for grandchildren without aliasing.
     let Some(children) = model.address_index.get(parent).cloned() else {
@@ -128,7 +123,11 @@ fn add_subfolder_menu(
         ui.add_enabled_ui(enabled, |ui| {
             if ui.button("➕").clicked() {
                 let name = buf.trim().to_string();
-                let node_id = format!("ns=2;s={}_{}", parent_id.replace(':', "_"), name.replace(' ', "_"));
+                let node_id = format!(
+                    "ns=2;s={}_{}",
+                    parent_id.replace(':', "_"),
+                    name.replace(' ', "_")
+                );
                 backend.send(UiCommand::AddFolder {
                     node_id,
                     display_name: name,

@@ -5,18 +5,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use opcua_client::Session;
-use opcua_types::{
-    AttributeId, NodeId, ReadValueId, TimestampsToReturn, Variant,
-};
+use opcua_types::{AttributeId, NodeId, ReadValueId, TimestampsToReturn, Variant};
 
 use opcuasim_core::client::OpcUaConnection;
 use opcuasim_core::config::ConnectionConfig;
 use opcuasim_core::node::{
     AccessMode, DataChangeFilterCfg, DataChangeTriggerKind, DeadbandKind, MonitoredNode,
 };
-use opcuasim_core::server::models::{
-    DataType, ServerConfig, ServerNode, SimulationMode,
-};
+use opcuasim_core::server::models::{DataType, ServerConfig, ServerNode, SimulationMode};
 use opcuasim_core::server::server::OpcUaServer;
 use opcuasim_core::subscription::SubscriptionManager;
 
@@ -137,10 +133,7 @@ async fn eu_range_property_and_percent_deadband() {
     );
 
     tokio::time::sleep(Duration::from_millis(600)).await;
-    assert!(
-        sub_mgr.get_update_seq().await > 0,
-        "expected data changes"
-    );
+    assert!(sub_mgr.get_update_seq().await > 0, "expected data changes");
 
     conn.disconnect().await.expect("disconnect");
     server.stop().await.expect("server stop");

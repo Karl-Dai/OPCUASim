@@ -47,12 +47,17 @@ pub enum OpcUaSimError {
 impl OpcUaSimError {
     pub fn category(&self) -> &'static str {
         match self {
-            Self::ConnectionFailed(_) | Self::SessionTimeout
-            | Self::SecurityRejected(_) | Self::AuthenticationFailed => "connection",
-            Self::BrowseError(_) | Self::ReadError(_)
-            | Self::WriteError(_) | Self::SubscriptionError(_) => "protocol",
-            Self::ConfigError(_) | Self::ProjectFileError(_)
-            | Self::OutputError(_) => "application",
+            Self::ConnectionFailed(_)
+            | Self::SessionTimeout
+            | Self::SecurityRejected(_)
+            | Self::AuthenticationFailed => "connection",
+            Self::BrowseError(_)
+            | Self::ReadError(_)
+            | Self::WriteError(_)
+            | Self::SubscriptionError(_) => "protocol",
+            Self::ConfigError(_) | Self::ProjectFileError(_) | Self::OutputError(_) => {
+                "application"
+            }
             Self::ServerError(_) | Self::SimulationError(_) => "server",
             Self::Io(_) | Self::Internal(_) => "generic",
         }

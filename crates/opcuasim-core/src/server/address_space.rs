@@ -1,7 +1,7 @@
 use opcua_nodes::ReferenceDirection;
 use opcua_server::address_space::{AddressSpace, VariableBuilder};
 use opcua_types::{
-    DataTypeId, LocalizedText, NodeId, QualifiedName, ReferenceTypeId, Variant, UAString,
+    DataTypeId, LocalizedText, NodeId, QualifiedName, ReferenceTypeId, UAString, Variant,
 };
 
 use super::models::{DataType, ServerFolder, ServerNode, SimulationMode};
@@ -16,14 +16,38 @@ fn data_type_to_node_id(dt: &DataType) -> NodeId {
 pub fn string_to_variant(value: &str, data_type: &DataType) -> Variant {
     match data_type {
         DataType::Boolean => Variant::Boolean(value.eq_ignore_ascii_case("true") || value == "1"),
-        DataType::Int16 => value.parse::<i16>().map(Variant::Int16).unwrap_or(Variant::Int16(0)),
-        DataType::Int32 => value.parse::<i32>().map(Variant::Int32).unwrap_or(Variant::Int32(0)),
-        DataType::Int64 => value.parse::<i64>().map(Variant::Int64).unwrap_or(Variant::Int64(0)),
-        DataType::UInt16 => value.parse::<u16>().map(Variant::UInt16).unwrap_or(Variant::UInt16(0)),
-        DataType::UInt32 => value.parse::<u32>().map(Variant::UInt32).unwrap_or(Variant::UInt32(0)),
-        DataType::UInt64 => value.parse::<u64>().map(Variant::UInt64).unwrap_or(Variant::UInt64(0)),
-        DataType::Float => value.parse::<f32>().map(Variant::Float).unwrap_or(Variant::Float(0.0)),
-        DataType::Double => value.parse::<f64>().map(Variant::Double).unwrap_or(Variant::Double(0.0)),
+        DataType::Int16 => value
+            .parse::<i16>()
+            .map(Variant::Int16)
+            .unwrap_or(Variant::Int16(0)),
+        DataType::Int32 => value
+            .parse::<i32>()
+            .map(Variant::Int32)
+            .unwrap_or(Variant::Int32(0)),
+        DataType::Int64 => value
+            .parse::<i64>()
+            .map(Variant::Int64)
+            .unwrap_or(Variant::Int64(0)),
+        DataType::UInt16 => value
+            .parse::<u16>()
+            .map(Variant::UInt16)
+            .unwrap_or(Variant::UInt16(0)),
+        DataType::UInt32 => value
+            .parse::<u32>()
+            .map(Variant::UInt32)
+            .unwrap_or(Variant::UInt32(0)),
+        DataType::UInt64 => value
+            .parse::<u64>()
+            .map(Variant::UInt64)
+            .unwrap_or(Variant::UInt64(0)),
+        DataType::Float => value
+            .parse::<f32>()
+            .map(Variant::Float)
+            .unwrap_or(Variant::Float(0.0)),
+        DataType::Double => value
+            .parse::<f64>()
+            .map(Variant::Double)
+            .unwrap_or(Variant::Double(0.0)),
         DataType::String => Variant::String(UAString::from(value)),
         DataType::DateTime => Variant::String(UAString::from(value)),
         DataType::ByteString => Variant::String(UAString::from(value)),
@@ -50,8 +74,9 @@ pub fn f64_to_variant(value: f64, data_type: &DataType) -> Variant {
 
 /// Parse a node_id string to OPC UA NodeId.
 pub fn parse_node_id(node_id_str: &str) -> Result<NodeId, OpcUaSimError> {
-    node_id_str.parse::<NodeId>()
-        .map_err(|e| OpcUaSimError::ServerError(format!("Invalid node id '{}': {}", node_id_str, e)))
+    node_id_str.parse::<NodeId>().map_err(|e| {
+        OpcUaSimError::ServerError(format!("Invalid node id '{}': {}", node_id_str, e))
+    })
 }
 
 /// Populate an address space with folders and variable nodes.
@@ -126,12 +151,20 @@ fn add_eu_range_property(
         .build();
     address_space.insert(
         prop,
-        Some(&[(&var_id, &ReferenceTypeId::HasProperty, ReferenceDirection::Inverse)]),
+        Some(&[(
+            &var_id,
+            &ReferenceTypeId::HasProperty,
+            ReferenceDirection::Inverse,
+        )]),
     );
 }
 
 /// Remove a node from the address space.
-pub fn remove_node(address_space: &mut AddressSpace, namespace_index: u16, node_id_str: &str) -> bool {
+pub fn remove_node(
+    address_space: &mut AddressSpace,
+    namespace_index: u16,
+    node_id_str: &str,
+) -> bool {
     let node_id = make_node_id(namespace_index, node_id_str);
     address_space.delete(&node_id, true).is_some()
 }
@@ -140,7 +173,9 @@ pub fn remove_node(address_space: &mut AddressSpace, namespace_index: u16, node_
 fn make_node_id(namespace_index: u16, id_str: &str) -> NodeId {
     // If it already has a namespace prefix (ns=X;), parse directly
     if id_str.starts_with("ns=") || id_str.starts_with("i=") || id_str.starts_with("s=") {
-        id_str.parse::<NodeId>().unwrap_or_else(|_| NodeId::new(namespace_index, id_str))
+        id_str
+            .parse::<NodeId>()
+            .unwrap_or_else(|_| NodeId::new(namespace_index, id_str))
     } else {
         NodeId::new(namespace_index, id_str)
     }

@@ -1,5 +1,5 @@
-use std::sync::{Arc, RwLock};
 use crate::log_entry::LogEntry;
+use std::sync::{Arc, RwLock};
 
 const MAX_LOG_ENTRIES: usize = 10_000;
 
@@ -33,7 +33,11 @@ impl LogCollector {
 
     pub fn get_since(&self, since_seq: u64) -> Vec<LogEntry> {
         let entries = self.entries.read().unwrap();
-        entries.iter().filter(|e| e.seq > since_seq).cloned().collect()
+        entries
+            .iter()
+            .filter(|e| e.seq > since_seq)
+            .cloned()
+            .collect()
     }
 
     pub fn get_all(&self) -> Vec<LogEntry> {

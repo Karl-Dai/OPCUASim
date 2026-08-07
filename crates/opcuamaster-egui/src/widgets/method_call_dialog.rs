@@ -33,8 +33,7 @@ pub fn show(ctx: &egui::Context, state: &mut MethodCallState) -> DialogActions {
                 ui.label("(无入参)");
             } else {
                 if state.input_values.len() != state.inputs_meta.len() {
-                    state.input_values =
-                        state.inputs_meta.iter().map(default_for_type).collect();
+                    state.input_values = state.inputs_meta.iter().map(default_for_type).collect();
                 }
                 for (i, arg) in state.inputs_meta.iter().enumerate() {
                     ui.horizontal(|ui| {

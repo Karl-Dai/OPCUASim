@@ -31,12 +31,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
         .clone()
         .or_else(|| model.monitor.selected_rows.iter().next().cloned())
     else {
-        empty_state(
-            ui,
-            "👈",
-            "未选择节点",
-            Some("从中央表格选择一行查看详情"),
-        );
+        empty_state(ui, "👈", "未选择节点", Some("从中央表格选择一行查看详情"));
         return;
     };
 
@@ -135,8 +130,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                         .small()
                         .color(theme::TEXT_MUTED()),
                 );
-                let mut edit =
-                    egui::TextEdit::singleline(&mut model.value_panel.write_value);
+                let mut edit = egui::TextEdit::singleline(&mut model.value_panel.write_value);
                 if parse_err.is_some() {
                     edit = edit.text_color(theme::STATUS_BAD());
                 }
@@ -162,11 +156,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                 }
             });
             if let Some(msg) = parse_err {
-                ui.label(
-                    egui::RichText::new(msg)
-                        .small()
-                        .color(theme::STATUS_BAD()),
-                );
+                ui.label(egui::RichText::new(msg).small().color(theme::STATUS_BAD()));
             }
         }
     });

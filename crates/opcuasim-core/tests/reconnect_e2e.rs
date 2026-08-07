@@ -3,15 +3,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use opcua_types::{AttributeId, NodeId, ReadValueId, TimestampsToReturn};
 use opcuasim_core::client::{ConnectionState, OpcUaConnection};
 use opcuasim_core::config::ConnectionConfig;
 use opcuasim_core::node::{AccessMode, MonitoredNode};
-use opcuasim_core::server::models::{
-    DataType, ServerConfig, ServerNode, SimulationMode,
-};
+use opcuasim_core::server::models::{DataType, ServerConfig, ServerNode, SimulationMode};
 use opcuasim_core::server::server::OpcUaServer;
 use opcuasim_core::subscription::SubscriptionManager;
-use opcua_types::{AttributeId, NodeId, ReadValueId, TimestampsToReturn};
 use tokio::sync::mpsc;
 
 const PORT: u16 = 48420;

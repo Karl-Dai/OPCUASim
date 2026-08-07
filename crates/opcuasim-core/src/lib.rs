@@ -1,19 +1,19 @@
-pub mod error;
-pub mod node;       // MonitoredNode, NodeGroup, BrowseResultItem, NodeAttributes
-pub mod config;     // ConnectionConfig, AuthConfig, ProjectFile (includes security config)
-pub mod output;
-pub mod log_entry;
-pub mod log_collector;
-pub mod reconnect;
-pub mod client;
 pub mod browse;
 pub mod cert_manager;
+pub mod client;
+pub mod config; // ConnectionConfig, AuthConfig, ProjectFile (includes security config)
 pub mod discovery;
+pub mod error;
 pub mod history;
+pub mod log_collector;
+pub mod log_entry;
 pub mod method;
-pub mod subscription;
+pub mod node; // MonitoredNode, NodeGroup, BrowseResultItem, NodeAttributes
+pub mod output;
 pub mod polling;
-pub mod server;     // OPC UA server simulation module
+pub mod reconnect;
+pub mod server;
+pub mod subscription; // OPC UA server simulation module
 
 /// Re-export the OPC UA Session type for downstream crates.
 pub use opcua_client::Session as OpcUaSession;

@@ -34,15 +34,12 @@ pub fn show(ui: &mut egui::Ui, model: &AppModel) {
                 .monospace()
                 .color(theme::TEXT_MUTED()),
         );
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                ui.label(
-                    egui::RichText::new(format!("seq #{}", model.last_sim_seq))
-                        .small()
-                        .color(theme::TEXT_FAINT()),
-                );
-            },
-        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(format!("seq #{}", model.last_sim_seq))
+                    .small()
+                    .color(theme::TEXT_FAINT()),
+            );
+        });
     });
 }

@@ -1,6 +1,8 @@
 //! Reusable presentational widgets shared by the master and server UIs.
 
-use egui::{Align2, Color32, Context, CornerRadius, Frame, Margin, Response, RichText, Stroke, Ui, Vec2};
+use egui::{
+    Align2, Color32, Context, CornerRadius, Frame, Margin, Response, RichText, Stroke, Ui, Vec2,
+};
 
 use crate::theme;
 
@@ -51,11 +53,7 @@ pub fn empty_state(ui: &mut Ui, icon: &str, title: &str, hint: Option<&str>) {
         ui.add_space(28.0);
         ui.label(RichText::new(icon).size(34.0).color(theme::TEXT_FAINT()));
         ui.add_space(8.0);
-        ui.label(
-            RichText::new(title)
-                .color(theme::TEXT_MUTED())
-                .strong(),
-        );
+        ui.label(RichText::new(title).color(theme::TEXT_MUTED()).strong());
         if let Some(h) = hint {
             ui.add_space(2.0);
             ui.label(RichText::new(h).small().color(theme::TEXT_FAINT()));

@@ -69,8 +69,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut HistoryTabState) -> TabActions {
 
     ui.horizontal(|ui| {
         ui.label("起");
-        let mut start_edit =
-            egui::TextEdit::singleline(&mut state.start_iso).desired_width(220.0);
+        let mut start_edit = egui::TextEdit::singleline(&mut state.start_iso).desired_width(220.0);
         if !start_valid {
             start_edit = start_edit.text_color(opcuaegui_shared::theme::STATUS_BAD());
         }
@@ -79,8 +78,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut HistoryTabState) -> TabActions {
             start_resp.on_hover_text("RFC3339 格式，如 2026-05-04T12:00:00Z");
         }
         ui.label("止");
-        let mut end_edit =
-            egui::TextEdit::singleline(&mut state.end_iso).desired_width(220.0);
+        let mut end_edit = egui::TextEdit::singleline(&mut state.end_iso).desired_width(220.0);
         if !end_valid {
             end_edit = end_edit.text_color(opcuaegui_shared::theme::STATUS_BAD());
         }
@@ -97,7 +95,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut HistoryTabState) -> TabActions {
             egui::Button::new(if busy { "加载中…" } else { "🔄 刷新" }),
         );
         if !range_valid && !busy {
-            resp.clone().on_hover_text("起始时间必须早于结束时间且格式有效");
+            resp.clone()
+                .on_hover_text("起始时间必须早于结束时间且格式有效");
         }
         if resp.clicked() {
             actions.refresh = true;
@@ -113,11 +112,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut HistoryTabState) -> TabActions {
     });
 
     if let Some(err) = &state.error {
-        opcuaegui_shared::widgets::toast_card(
-            ui,
-            opcuaegui_shared::theme::STATUS_BAD(),
-            err,
-        );
+        opcuaegui_shared::widgets::toast_card(ui, opcuaegui_shared::theme::STATUS_BAD(), err);
     }
 
     ui.separator();

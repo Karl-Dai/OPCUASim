@@ -3,16 +3,14 @@ use std::sync::Arc;
 use log::info;
 use tokio::sync::RwLock;
 
-use opcua_server::node_manager::memory::{
-    simple_node_manager, SimpleNodeManager,
-};
+use opcua_crypto::SecurityPolicy;
 use opcua_server::diagnostics::NamespaceMetadata;
+use opcua_server::node_manager::memory::{simple_node_manager, SimpleNodeManager};
 use opcua_server::{
     Server, ServerBuilder, ServerHandle, ServerUserToken, SubscriptionCache,
     ANONYMOUS_USER_TOKEN_ID,
 };
 use opcua_types::MessageSecurityMode;
-use opcua_crypto::SecurityPolicy;
 
 use super::address_space::populate_address_space;
 use super::models::{ServerConfig, ServerFolder, ServerNode, ServerState};
@@ -116,16 +114,21 @@ fn build_server(
             let id = format!("{}_{}", policy.to_lowercase(), mode.to_lowercase());
             builder = builder.add_endpoint(
                 &id,
-                (endpoint_path, sec_policy, sec_mode, &token_ids_ref as &[&str]),
+                (
+                    endpoint_path,
+                    sec_policy,
+                    sec_mode,
+                    &token_ids_ref as &[&str],
+                ),
             );
         }
     }
 
     builder = builder.discovery_urls(vec![endpoint_path.to_string()]);
 
-    let (server, handle) = builder.build().map_err(|e| {
-        OpcUaSimError::ServerError(format!("Server build failed: {}", e))
-    })?;
+    let (server, handle) = builder
+        .build()
+        .map_err(|e| OpcUaSimError::ServerError(format!("Server build failed: {}", e)))?;
 
     let node_managers = handle.node_managers();
     let sim_nm = node_managers
@@ -150,7 +153,11 @@ fn build_server(
         let mut address_space = sim_nm.address_space().write();
         populate_address_space(&mut address_space, ns_index, folders, nodes);
     }
-    info!("Address space populated: {} folders, {} nodes", folders.len(), nodes.len());
+    info!(
+        "Address space populated: {} folders, {} nodes",
+        folders.len(),
+        nodes.len()
+    );
 
     let subscriptions = server.subscriptions();
 

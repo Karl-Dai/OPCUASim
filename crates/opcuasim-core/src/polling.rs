@@ -1,8 +1,8 @@
+use log::info;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use log::info;
 
 use opcua_client::Session;
 use opcua_types::{AttributeId, NodeId, ReadValueId, TimestampsToReturn};
@@ -25,9 +25,16 @@ impl PollingManager {
         }
     }
 
-    pub async fn add_polling_node(&self, node: MonitoredNode, interval_ms: u64) -> Result<(), OpcUaSimError> {
+    pub async fn add_polling_node(
+        &self,
+        node: MonitoredNode,
+        interval_ms: u64,
+    ) -> Result<(), OpcUaSimError> {
         let node_id = node.node_id.clone();
-        info!("Adding polling for node: {} (interval: {}ms)", node_id, interval_ms);
+        info!(
+            "Adding polling for node: {} (interval: {}ms)",
+            node_id, interval_ms
+        );
 
         {
             let mut items = self.monitored_items.write().await;
@@ -39,7 +46,8 @@ impl PollingManager {
         let nid = node_id.clone();
 
         let handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(interval_ms));
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_millis(interval_ms));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 interval.tick().await;
@@ -64,10 +72,26 @@ impl PollingManager {
                 match session.read(&read_ids, TimestampsToReturn::Both, 0.0).await {
                     Ok(values) => {
                         if let Some(dv) = values.first() {
-                            let value_str = dv.value.as_ref().map(|v| format!("{v}")).unwrap_or_else(|| "null".to_string());
-                            let quality_str = dv.status.as_ref().map(|s| format!("{s}")).unwrap_or_else(|| "Good".to_string());
-                            let source_ts = dv.source_timestamp.as_ref().map(|t| t.to_string()).unwrap_or_default();
-                            let server_ts = dv.server_timestamp.as_ref().map(|t| t.to_string()).unwrap_or_default();
+                            let value_str = dv
+                                .value
+                                .as_ref()
+                                .map(|v| format!("{v}"))
+                                .unwrap_or_else(|| "null".to_string());
+                            let quality_str = dv
+                                .status
+                                .as_ref()
+                                .map(|s| format!("{s}"))
+                                .unwrap_or_else(|| "Good".to_string());
+                            let source_ts = dv
+                                .source_timestamp
+                                .as_ref()
+                                .map(|t| t.to_string())
+                                .unwrap_or_default();
+                            let server_ts = dv
+                                .server_timestamp
+                                .as_ref()
+                                .map(|t| t.to_string())
+                                .unwrap_or_default();
                             let mut items = items.write().await;
                             if let Some(node) = items.get_mut(&nid) {
                                 node.value = Some(value_str);
@@ -109,6 +133,11 @@ impl PollingManager {
     }
 
     pub async fn get_polling_nodes(&self) -> Vec<MonitoredNode> {
-        self.monitored_items.read().await.values().cloned().collect()
+        self.monitored_items
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect()
     }
 }

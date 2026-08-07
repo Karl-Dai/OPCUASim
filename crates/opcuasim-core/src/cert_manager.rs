@@ -100,8 +100,7 @@ pub fn delete_certificate(path: &Path) -> Result<(), OpcUaSimError> {
     if !path.exists() {
         return Ok(());
     }
-    fs::remove_file(path)
-        .map_err(|e| OpcUaSimError::ServerError(format!("remove {path:?}: {e}")))
+    fs::remove_file(path).map_err(|e| OpcUaSimError::ServerError(format!("remove {path:?}: {e}")))
 }
 
 fn read_summary(path: &Path, role: CertRole) -> CertSummary {
@@ -119,12 +118,7 @@ fn read_summary(path: &Path, role: CertRole) -> CertSummary {
     parse_summary(&bytes, path.to_path_buf(), file_name, role)
 }
 
-fn empty_summary(
-    path: PathBuf,
-    file_name: String,
-    role: CertRole,
-    subject: &str,
-) -> CertSummary {
+fn empty_summary(path: PathBuf, file_name: String, role: CertRole, subject: &str) -> CertSummary {
     CertSummary {
         path,
         file_name,
@@ -137,12 +131,7 @@ fn empty_summary(
     }
 }
 
-fn parse_summary(
-    bytes: &[u8],
-    path: PathBuf,
-    file_name: String,
-    role: CertRole,
-) -> CertSummary {
+fn parse_summary(bytes: &[u8], path: PathBuf, file_name: String, role: CertRole) -> CertSummary {
     let der_bytes: Vec<u8> = match X509Certificate::from_der(bytes) {
         Ok(_) => bytes.to_vec(),
         Err(_) => match ::pem::parse(bytes) {

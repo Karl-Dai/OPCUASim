@@ -7,23 +7,34 @@ use super::models::{DataType, SimulationMode};
 pub fn generate_value(mode: &SimulationMode, elapsed_secs: f64, iteration: u64) -> Option<f64> {
     match mode {
         SimulationMode::Static { .. } => None,
-        SimulationMode::Random { min, max, .. } => {
-            Some(rand::thread_rng().gen_range(*min..=*max))
-        }
-        SimulationMode::Sine { amplitude, offset, period_ms, .. } => {
+        SimulationMode::Random { min, max, .. } => Some(rand::thread_rng().gen_range(*min..=*max)),
+        SimulationMode::Sine {
+            amplitude,
+            offset,
+            period_ms,
+            ..
+        } => {
             let period_secs = *period_ms as f64 / 1000.0;
-            Some(*offset + *amplitude * (2.0 * std::f64::consts::PI * elapsed_secs / period_secs).sin())
+            Some(
+                *offset
+                    + *amplitude * (2.0 * std::f64::consts::PI * elapsed_secs / period_secs).sin(),
+            )
         }
-        SimulationMode::Linear { start, step, min, max, mode, .. } => {
+        SimulationMode::Linear {
+            start,
+            step,
+            min,
+            max,
+            mode,
+            ..
+        } => {
             let range = max - min;
             if range <= 0.0 {
                 return Some(*start);
             }
             let raw = start + step * iteration as f64;
             match mode {
-                super::models::LinearMode::Repeat => {
-                    Some(min + (raw - min).rem_euclid(range))
-                }
+                super::models::LinearMode::Repeat => Some(min + (raw - min).rem_euclid(range)),
                 super::models::LinearMode::Bounce => {
                     let pos = (raw - min) / range;
                     let cycle = pos.floor() as i64;

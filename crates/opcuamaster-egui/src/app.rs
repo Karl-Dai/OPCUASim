@@ -53,9 +53,9 @@ impl MasterApp {
             ));
         }
         if cmd_s {
-            if let Some(path) = opcuaegui_shared::widgets::pick_save_project_path(
-                "project.opcuaproj",
-            ) {
+            if let Some(path) =
+                opcuaegui_shared::widgets::pick_save_project_path("project.opcuaproj")
+            {
                 self.backend.send(UiCommand::SaveProject(path));
             }
         }
@@ -66,8 +66,7 @@ impl MasterApp {
         }
         if del && !self.model.monitor.selected_rows.is_empty() {
             if let Some(conn_id) = self.model.selected_conn.clone() {
-                let ids: Vec<String> =
-                    self.model.monitor.selected_rows.iter().cloned().collect();
+                let ids: Vec<String> = self.model.monitor.selected_rows.iter().cloned().collect();
                 self.backend.send(UiCommand::RemoveMonitoredNodes {
                     conn_id: conn_id.clone(),
                     node_ids: ids.clone(),
@@ -117,7 +116,8 @@ impl MasterApp {
                 full,
                 nodes,
             } => {
-                self.model.apply_monitored_snapshot(&conn_id, seq, full, nodes);
+                self.model
+                    .apply_monitored_snapshot(&conn_id, seq, full, nodes);
             }
             BackendEvent::NodeAttrs { req_id, attrs } => {
                 if self.model.value_panel.pending_read_req == Some(req_id) {
@@ -211,7 +211,11 @@ impl MasterApp {
                     tab.last_loaded = Some(std::time::Instant::now());
                 }
             }
-            BackendEvent::CertificateList { req_id, role, certs } => {
+            BackendEvent::CertificateList {
+                req_id,
+                role,
+                certs,
+            } => {
                 if let Some(Modal::CertManager(state)) = self.model.modal.as_mut() {
                     match role {
                         crate::events::CertRoleDto::Trusted => {
@@ -364,7 +368,11 @@ impl eframe::App for MasterApp {
 
             egui::Panel::bottom("log_panel")
                 .resizable(true)
-                .default_size(if self.model.logs.expanded { 240.0 } else { 44.0 })
+                .default_size(if self.model.logs.expanded {
+                    240.0
+                } else {
+                    44.0
+                })
                 .min_size(36.0)
                 .show_inside(ui, |ui| {
                     log_panel::show(ui, &mut self.model, &self.backend);
@@ -393,7 +401,10 @@ impl eframe::App for MasterApp {
                         self.model.central_tab,
                         crate::model::CentralPanelTab::DataTable
                     );
-                    if tab_button(ui, data_selected, "📊  监控表", false).0.clicked() {
+                    if tab_button(ui, data_selected, "📊  监控表", false)
+                        .0
+                        .clicked()
+                    {
                         self.model.central_tab = crate::model::CentralPanelTab::DataTable;
                     }
                     let mut clicked_tab: Option<usize> = None;
@@ -421,8 +432,7 @@ impl eframe::App for MasterApp {
                         self.model.history_tabs.remove(closed);
                         let remaining = self.model.history_tabs.len();
                         if remaining == 0 {
-                            self.model.central_tab =
-                                crate::model::CentralPanelTab::DataTable;
+                            self.model.central_tab = crate::model::CentralPanelTab::DataTable;
                         } else if let crate::model::CentralPanelTab::History(active) =
                             self.model.central_tab
                         {

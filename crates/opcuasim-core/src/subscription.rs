@@ -1,8 +1,8 @@
+use log::info;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use log::info;
 
 use opcua_client::{DataChangeCallback, Session};
 use opcua_types::{
@@ -85,7 +85,14 @@ impl SubscriptionManager {
                 .collect();
 
             if !items_to_create.is_empty() {
-                match session.create_monitored_items(sub_id, TimestampsToReturn::Both, items_to_create.clone()).await {
+                match session
+                    .create_monitored_items(
+                        sub_id,
+                        TimestampsToReturn::Both,
+                        items_to_create.clone(),
+                    )
+                    .await
+                {
                     Ok(_) => {}
                     Err(e) => {
                         // If subscription ID is invalid (e.g. after reconnect), recreate it
@@ -95,11 +102,23 @@ impl SubscriptionManager {
                             self.reset_subscription_id().await;
                             let new_sub_id = self.ensure_subscription(session).await?;
                             session
-                                .create_monitored_items(new_sub_id, TimestampsToReturn::Both, items_to_create)
+                                .create_monitored_items(
+                                    new_sub_id,
+                                    TimestampsToReturn::Both,
+                                    items_to_create,
+                                )
                                 .await
-                                .map_err(|e2| OpcUaSimError::SubscriptionError(format!("Retry create monitored items failed: {}", e2)))?;
+                                .map_err(|e2| {
+                                    OpcUaSimError::SubscriptionError(format!(
+                                        "Retry create monitored items failed: {}",
+                                        e2
+                                    ))
+                                })?;
                         } else {
-                            return Err(OpcUaSimError::SubscriptionError(format!("Create monitored items failed: {}", e)));
+                            return Err(OpcUaSimError::SubscriptionError(format!(
+                                "Create monitored items failed: {}",
+                                e
+                            )));
                         }
                     }
                 }
@@ -129,25 +148,28 @@ impl SubscriptionManager {
             let raw_node_id = &monitored_item.item_to_monitor().node_id;
             let node_id_str = format!("{}", raw_node_id);
             info!("DataChange callback for node: {}", node_id_str);
-            let value_str = data_value.value.as_ref()
+            let value_str = data_value
+                .value
+                .as_ref()
                 .map(|v| format!("{}", v))
                 .unwrap_or_else(|| "null".to_string());
-            let data_type_str = data_value.value.as_ref().map(|v| {
-                match v.type_id() {
-                    opcua_types::variant::VariantTypeId::Empty => "Empty".to_string(),
-                    opcua_types::variant::VariantTypeId::Scalar(s) => format!("{}", s),
-                    opcua_types::variant::VariantTypeId::Array(s, _) => format!("Array<{}>", s),
-                }
+            let data_type_str = data_value.value.as_ref().map(|v| match v.type_id() {
+                opcua_types::variant::VariantTypeId::Empty => "Empty".to_string(),
+                opcua_types::variant::VariantTypeId::Scalar(s) => format!("{}", s),
+                opcua_types::variant::VariantTypeId::Array(s, _) => format!("Array<{}>", s),
             });
-            let quality_str = data_value.status
+            let quality_str = data_value
+                .status
                 .as_ref()
                 .map(|s| format!("{}", s))
                 .unwrap_or_else(|| "Good".to_string());
-            let source_ts = data_value.source_timestamp
+            let source_ts = data_value
+                .source_timestamp
                 .as_ref()
                 .map(|t| t.to_string())
                 .unwrap_or_default();
-            let server_ts = data_value.server_timestamp
+            let server_ts = data_value
+                .server_timestamp
                 .as_ref()
                 .map(|t| t.to_string())
                 .unwrap_or_default();
@@ -173,16 +195,18 @@ impl SubscriptionManager {
 
         let sub_id = session
             .create_subscription(
-                Duration::from_millis(1000),  // publishing interval
-                300,  // lifetime count (must be >= 3 * max_keep_alive_count)
-                10,   // max keep alive count
-                0,    // max notifications per publish (0 = unlimited)
-                0,    // priority
-                true, // publishing enabled
+                Duration::from_millis(1000), // publishing interval
+                300,                         // lifetime count (must be >= 3 * max_keep_alive_count)
+                10,                          // max keep alive count
+                0,                           // max notifications per publish (0 = unlimited)
+                0,                           // priority
+                true,                        // publishing enabled
                 callback,
             )
             .await
-            .map_err(|e| OpcUaSimError::SubscriptionError(format!("Create subscription failed: {}", e)))?;
+            .map_err(|e| {
+                OpcUaSimError::SubscriptionError(format!("Create subscription failed: {}", e))
+            })?;
 
         {
             let mut sid = self.subscription_id.write().await;
@@ -210,14 +234,17 @@ impl SubscriptionManager {
         let mut seq = self.update_seq.write().await;
 
         for batch in valid_nodes.chunks(BATCH_SIZE) {
-            let read_ids: Vec<ReadValueId> = batch.iter().flat_map(|(_, nid)| {
-                vec![
-                    ReadValueId::new(nid.clone(), opcua_types::AttributeId::DataType),
-                    ReadValueId::new(nid.clone(), opcua_types::AttributeId::Value),
-                    ReadValueId::new(nid.clone(), opcua_types::AttributeId::AccessLevel),
-                    ReadValueId::new(nid.clone(), opcua_types::AttributeId::UserAccessLevel),
-                ]
-            }).collect();
+            let read_ids: Vec<ReadValueId> = batch
+                .iter()
+                .flat_map(|(_, nid)| {
+                    vec![
+                        ReadValueId::new(nid.clone(), opcua_types::AttributeId::DataType),
+                        ReadValueId::new(nid.clone(), opcua_types::AttributeId::Value),
+                        ReadValueId::new(nid.clone(), opcua_types::AttributeId::AccessLevel),
+                        ReadValueId::new(nid.clone(), opcua_types::AttributeId::UserAccessLevel),
+                    ]
+                })
+                .collect();
 
             match session.read(&read_ids, TimestampsToReturn::Both, 0.0).await {
                 Ok(values) => {
@@ -232,10 +259,18 @@ impl SubscriptionManager {
                             .map(|v| resolve_data_type(&format!("{}", v)))
                             .unwrap_or_else(|| "Unknown".to_string());
 
-                        let value = val_dv.and_then(|dv| dv.value.as_ref()).map(|v| format!("{}", v));
-                        let quality = val_dv.and_then(|dv| dv.status.as_ref()).map(|s| format!("{}", s));
-                        let source_ts = val_dv.and_then(|dv| dv.source_timestamp.as_ref()).map(|t| t.to_string());
-                        let server_ts = val_dv.and_then(|dv| dv.server_timestamp.as_ref()).map(|t| t.to_string());
+                        let value = val_dv
+                            .and_then(|dv| dv.value.as_ref())
+                            .map(|v| format!("{}", v));
+                        let quality = val_dv
+                            .and_then(|dv| dv.status.as_ref())
+                            .map(|s| format!("{}", s));
+                        let source_ts = val_dv
+                            .and_then(|dv| dv.source_timestamp.as_ref())
+                            .map(|t| t.to_string());
+                        let server_ts = val_dv
+                            .and_then(|dv| dv.server_timestamp.as_ref())
+                            .map(|t| t.to_string());
                         let is_value_ok = quality.as_deref() != Some("BadAttributeIdInvalid");
 
                         // Extract access level byte from Variant, handling multiple numeric types
@@ -286,7 +321,11 @@ impl SubscriptionManager {
                 }
             }
         }
-        info!("Initial read completed for {} nodes ({} batches)", nodes.len(), valid_nodes.len().div_ceil(BATCH_SIZE));
+        info!(
+            "Initial read completed for {} nodes ({} batches)",
+            nodes.len(),
+            valid_nodes.len().div_ceil(BATCH_SIZE)
+        );
     }
 
     /// Reset the subscription ID (e.g. after reconnect)
@@ -304,7 +343,12 @@ impl SubscriptionManager {
     }
 
     pub async fn get_monitored_nodes(&self) -> Vec<MonitoredNode> {
-        self.monitored_items.read().await.values().cloned().collect()
+        self.monitored_items
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect()
     }
 
     pub async fn get_monitored_nodes_since(&self, since_seq: u64) -> Vec<MonitoredNode> {

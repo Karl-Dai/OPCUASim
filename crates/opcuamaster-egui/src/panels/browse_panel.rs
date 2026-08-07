@@ -37,11 +37,7 @@ fn render_controls(ui: &mut egui::Ui, model: &mut AppModel) {
                     "Subscription".into(),
                     "Subscription",
                 );
-                ui.selectable_value(
-                    &mut model.browse.access_mode,
-                    "Polling".into(),
-                    "Polling",
-                );
+                ui.selectable_value(&mut model.browse.access_mode, "Polling".into(), "Polling");
             });
         ui.separator();
         ui.label("间隔 (ms):");
@@ -71,11 +67,7 @@ fn render_controls(ui: &mut egui::Ui, model: &mut AppModel) {
                                 crate::events::DataChangeTriggerKindReq::StatusValue,
                                 crate::events::DataChangeTriggerKindReq::StatusValueTimestamp,
                             ] {
-                                ui.selectable_value(
-                                    &mut model.browse.trigger,
-                                    v,
-                                    format!("{v:?}"),
-                                );
+                                ui.selectable_value(&mut model.browse.trigger, v, format!("{v:?}"));
                             }
                         });
                 });
@@ -110,12 +102,7 @@ fn render_controls(ui: &mut egui::Ui, model: &mut AppModel) {
         });
 }
 
-fn render_tree(
-    ui: &mut egui::Ui,
-    model: &mut AppModel,
-    backend: &BackendHandle,
-    conn_id: &str,
-) {
+fn render_tree(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle, conn_id: &str) {
     egui::ScrollArea::both()
         .auto_shrink([false, false])
         .max_height(360.0)
@@ -252,8 +239,8 @@ fn render_node(
             let resp = ui.label(display);
             resp.context_menu(|ui| {
                 if ui.button("⚙ 调用方法...").clicked() {
-                    let parent_id = find_parent_object(model, node_id)
-                        .unwrap_or_else(|| node_id.to_string());
+                    let parent_id =
+                        find_parent_object(model, node_id).unwrap_or_else(|| node_id.to_string());
                     let display_name = model
                         .browse
                         .nodes
@@ -287,12 +274,7 @@ fn find_parent_object(model: &AppModel, node_id: &str) -> Option<String> {
     model.browse.parent_of.get(node_id).cloned()
 }
 
-pub fn open_history_tab(
-    model: &mut AppModel,
-    conn_id: &str,
-    node_id: &str,
-    display_name: &str,
-) {
+pub fn open_history_tab(model: &mut AppModel, conn_id: &str, node_id: &str, display_name: &str) {
     let idx = model.history_tabs.len();
     model.history_tabs.push(crate::model::HistoryTabState::new(
         conn_id.to_string(),
@@ -310,12 +292,7 @@ fn toggle_selection(model: &mut AppModel, node_id: &str, checked: bool) {
     }
 }
 
-fn dispatch_browse(
-    model: &mut AppModel,
-    backend: &BackendHandle,
-    conn_id: &str,
-    node_id: &str,
-) {
+fn dispatch_browse(model: &mut AppModel, backend: &BackendHandle, conn_id: &str, node_id: &str) {
     let req_id = model.alloc_req_id();
     if let Some(st) = model.browse.nodes.get_mut(node_id) {
         st.loading = true;
@@ -329,12 +306,7 @@ fn dispatch_browse(
     });
 }
 
-fn render_footer(
-    ui: &mut egui::Ui,
-    model: &mut AppModel,
-    backend: &BackendHandle,
-    conn_id: &str,
-) {
+fn render_footer(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle, conn_id: &str) {
     ui.horizontal(|ui| {
         let selected_count = model.browse.selected.len();
         ui.label(format!("已选 {selected_count} 个变量"));
@@ -344,7 +316,10 @@ fn render_footer(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(selected_count > 0, |ui| {
-                if ui.button(format!("➕ 添加选中 ({selected_count})")).clicked() {
+                if ui
+                    .button(format!("➕ 添加选中 ({selected_count})"))
+                    .clicked()
+                {
                     let filter_req = model.current_filter_req();
                     let nodes: Vec<MonitoredNodeReq> = model
                         .browse
@@ -398,10 +373,7 @@ pub fn apply_browse_result(
         }
         Some(pid) => {
             for cid in &ids {
-                model
-                    .browse
-                    .parent_of
-                    .insert(cid.clone(), pid.clone());
+                model.browse.parent_of.insert(cid.clone(), pid.clone());
             }
             if let Some(st) = model.browse.nodes.get_mut(&pid) {
                 st.loading = false;

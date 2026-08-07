@@ -61,10 +61,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
     let shift = ctx_modifiers.shift;
 
     enum RowAction {
-        Click {
-            idx: usize,
-            node_id: String,
-        },
+        Click { idx: usize, node_id: String },
         Delete(String),
     }
 
@@ -96,8 +93,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                     return;
                 };
                 let multi_selected = model.selected_node_ids.contains(&n.node_id);
-                let single_selected =
-                    model.selected_node_id.as_deref() == Some(&n.node_id);
+                let single_selected = model.selected_node_id.as_deref() == Some(&n.node_id);
                 row.set_selected(multi_selected || single_selected);
 
                 row.col(|ui| {

@@ -98,7 +98,12 @@ pub async fn history_read_raw(
             let release_action =
                 HistoryReadAction::ReadRawModifiedDetails(ReadRawModifiedDetails::default());
             if let Err(e) = session
-                .history_read(release_action, TimestampsToReturn::Neither, true, &release_nodes)
+                .history_read(
+                    release_action,
+                    TimestampsToReturn::Neither,
+                    true,
+                    &release_nodes,
+                )
                 .await
             {
                 log::warn!("Failed to release history continuation point: {e}");

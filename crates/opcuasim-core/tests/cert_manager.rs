@@ -19,8 +19,7 @@ fn setup_pki(tmp: &tempfile::TempDir) -> PathBuf {
 #[test]
 fn list_empty_when_dir_missing() {
     let tmp = tempfile::tempdir().unwrap();
-    let list =
-        list_certificates(tmp.path(), CertRole::Trusted).expect("list ok");
+    let list = list_certificates(tmp.path(), CertRole::Trusted).expect("list ok");
     assert!(list.is_empty());
 }
 
@@ -41,17 +40,10 @@ fn list_then_move_then_delete() {
         !summary.thumbprint.is_empty(),
         "thumbprint should be set, got summary={summary:?}"
     );
-    assert!(
-        !summary.subject_cn.is_empty(),
-        "subject_cn should be set"
-    );
-    assert!(
-        !summary.valid_from.is_empty(),
-        "valid_from should be set"
-    );
+    assert!(!summary.subject_cn.is_empty(), "subject_cn should be set");
+    assert!(!summary.valid_from.is_empty(), "valid_from should be set");
 
-    let new_path =
-        move_certificate(&pki, &reject_path, CertRole::Trusted).expect("move ok");
+    let new_path = move_certificate(&pki, &reject_path, CertRole::Trusted).expect("move ok");
     assert!(new_path.starts_with(pki.join("trusted")));
     assert!(!reject_path.exists());
     assert!(new_path.exists());
