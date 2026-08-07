@@ -3,13 +3,19 @@ use std::sync::Arc;
 use opcua_client::Session;
 use log::info;
 use opcua_types::{
-    AttributeId, BrowseDescription, BrowseDirection, DataValue, NodeClass, NodeId,
+    AttributeId, BrowseDescription, BrowseDirection, ByteString, DataValue, NodeClass, NodeId,
     NumericRange, ReadValueId, ReferenceTypeId, StatusCode, TimestampsToReturn,
     UAString, Variant, WriteValue,
 };
 
 use crate::error::OpcUaSimError;
 use crate::node::{BrowseResultItem, NodeAttributes};
+
+/// Defensive cap on total references collected across Browse + BrowseNext pagination.
+/// OPC UA Part 4 5.8.3: servers may silently truncate references beyond their per-request
+/// limit (commonly 1000) via a ContinuationPoint; we must loop BrowseNext to exhaust them,
+/// but still bound memory in pathological cases.
+const MAX_TOTAL_REFERENCES: usize = 100_000;
 
 /// Browse children of a node. Pass None for node_id to browse from root (Objects folder).
 pub async fn browse_node(
@@ -33,39 +39,74 @@ pub async fn browse_node(
         result_mask: 0x3F, // All fields
     }];
 
-    let results = session
-        .browse(&browse_desc, 0, None)
-        .await
-        .map_err(|e| OpcUaSimError::BrowseError(format!("Browse failed: {}", e)))?;
-
     let mut items = Vec::new();
-    for result in results {
-        if let Some(refs) = result.references {
-            for r in refs {
-                let node_class_str = match r.node_class {
-                    NodeClass::Object => "Object",
-                    NodeClass::Variable => "Variable",
-                    NodeClass::Method => "Method",
-                    NodeClass::ObjectType => "ObjectType",
-                    NodeClass::VariableType => "VariableType",
-                    NodeClass::ReferenceType => "ReferenceType",
-                    NodeClass::DataType => "DataType",
-                    NodeClass::View => "View",
-                    _ => "Unspecified",
-                };
+    let mut continuation_point = ByteString::null();
+    let mut first_round = true;
 
-                // Default to true — let actual browse determine if children exist
-                let has_children = true;
+    // Follow ContinuationPoints until exhausted (OPC UA Part 4 5.8.3).
+    // First iteration uses Browse; subsequent iterations use BrowseNext.
+    loop {
+        let (references, next_cp) = if first_round {
+            first_round = false;
+            let raw = session
+                .browse(&browse_desc, 0, None)
+                .await
+                .map_err(|e| OpcUaSimError::BrowseError(format!("Browse failed: {}", e)))?;
+            let Some(result) = raw.into_iter().next() else {
+                break;
+            };
+            let next_cp = result.continuation_point;
+            (result.references, next_cp)
+        } else {
+            let raw = session
+                .browse_next(false, &[continuation_point])
+                .await
+                .map_err(|e| OpcUaSimError::BrowseError(format!("BrowseNext failed: {}", e)))?;
+            let Some(result) = raw.into_iter().next() else {
+                break;
+            };
+            let next_cp = result.continuation_point;
+            (result.references, next_cp)
+        };
 
-                items.push(BrowseResultItem {
-                    node_id: r.node_id.node_id.to_string(),
-                    display_name: r.display_name.text.value().clone().unwrap_or_default(),
-                    node_class: node_class_str.to_string(),
-                    data_type: None, // Would require additional read to determine
-                    has_children,
-                });
+        for r in references.into_iter().flatten() {
+            let node_class_str = match r.node_class {
+                NodeClass::Object => "Object",
+                NodeClass::Variable => "Variable",
+                NodeClass::Method => "Method",
+                NodeClass::ObjectType => "ObjectType",
+                NodeClass::VariableType => "VariableType",
+                NodeClass::ReferenceType => "ReferenceType",
+                NodeClass::DataType => "DataType",
+                NodeClass::View => "View",
+                _ => "Unspecified",
+            };
+
+            // Default to true — let actual browse determine if children exist
+            let has_children = true;
+
+            items.push(BrowseResultItem {
+                node_id: r.node_id.node_id.to_string(),
+                display_name: r.display_name.text.value().clone().unwrap_or_default(),
+                node_class: node_class_str.to_string(),
+                data_type: None, // Would require additional read to determine
+                has_children,
+            });
+
+            if items.len() >= MAX_TOTAL_REFERENCES {
+                log::warn!(
+                    "Browse of {:?} exceeded {} references; truncating",
+                    node_id,
+                    MAX_TOTAL_REFERENCES
+                );
+                return Ok(items);
             }
         }
+
+        if next_cp.is_null() {
+            break;
+        }
+        continuation_point = next_cp;
     }
 
     info!("Browse returned {} items for {:?}", items.len(), node_id);
