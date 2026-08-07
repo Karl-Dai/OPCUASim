@@ -9,7 +9,6 @@ use opcuasim_core::server::models::{
     DataType, ServerConfig, ServerFolder, ServerNode, SimulationMode,
 };
 use opcuasim_core::server::server::OpcUaServer;
-use opcuasim_core::server::test_methods::register_demo_echo_method;
 
 use opcuamaster_egui::events::{
     AuthKindReq, BackendEvent, CreateConnectionReq, DataChangeFilterReq, DataChangeTriggerKindReq,
@@ -548,10 +547,8 @@ async fn method_call_echo() {
     server.start(&config, &[], &[]).await.expect("server start");
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let method_id = register_demo_echo_method(&server)
-        .await
-        .expect("register echo");
-    let method_id_str = format!("{method_id}");
+    // Demo methods are auto-registered at server startup (methods.rs).
+    let method_id_str = "ns=2;s=Demo.Echo".to_string();
 
     let ctx = egui::Context::default();
     let (backend, mut rx) = BackendHandle::new(
