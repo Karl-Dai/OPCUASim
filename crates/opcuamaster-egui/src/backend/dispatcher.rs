@@ -401,6 +401,9 @@ async fn connect(
                 conn_for_loop.start_reconnect_loop(on_state_change).await;
             });
 
+            // Explicit restore on first connect — the reconnect loop's on_state_change
+            // will NOT fire here because the alive-short-circuit in start_reconnect_loop
+            // detects the already-live session and skips the Connected callback.
             restore_monitoring(&id, state, event_tx).await;
             list_connections(state, event_tx).await
         }
@@ -562,10 +565,9 @@ async fn add_monitored_nodes(
         })
         .collect();
 
-    let (sub_nodes, poll_nodes): (Vec<MonitoredNode>, Vec<MonitoredNode>) =
-        monitored.into_iter().partition(|n| {
-            matches!(n.access_mode, AccessMode::Subscription { .. })
-        });
+    let (sub_nodes, poll_nodes): (Vec<MonitoredNode>, Vec<MonitoredNode>) = monitored
+        .into_iter()
+        .partition(|n| matches!(n.access_mode, AccessMode::Subscription { .. }));
 
     {
         let mut conns = state.connections.write().map_err(|e| e.to_string())?;
@@ -662,10 +664,9 @@ async fn add_variables_under_node(
         })
         .collect();
 
-    let (sub_nodes, poll_nodes): (Vec<MonitoredNode>, Vec<MonitoredNode>) =
-        nodes.into_iter().partition(|n| {
-            matches!(n.access_mode, AccessMode::Subscription { .. })
-        });
+    let (sub_nodes, poll_nodes): (Vec<MonitoredNode>, Vec<MonitoredNode>) = nodes
+        .into_iter()
+        .partition(|n| matches!(n.access_mode, AccessMode::Subscription { .. }));
 
     {
         let mut conns = state.connections.write().map_err(|e| e.to_string())?;
@@ -718,8 +719,12 @@ async fn remove_monitored_nodes(
     let sub_mgr = {
         let mut conns = state.connections.write().map_err(|e| e.to_string())?;
         let entry = conns.get_mut(&conn_id).ok_or("Connection not found")?;
-        entry.pending_subscriptions.retain(|n| !node_ids.contains(&n.node_id));
-        entry.pending_polling.retain(|n| !node_ids.contains(&n.node_id));
+        entry
+            .pending_subscriptions
+            .retain(|n| !node_ids.contains(&n.node_id));
+        entry
+            .pending_polling
+            .retain(|n| !node_ids.contains(&n.node_id));
         entry.subscription_mgr.clone()
     };
     sub_mgr
@@ -741,7 +746,9 @@ async fn restore_monitoring(
             Ok(c) => c,
             Err(_) => return,
         };
-        let Some(entry) = conns.get(conn_id) else { return };
+        let Some(entry) = conns.get(conn_id) else {
+            return;
+        };
         (
             entry.pending_subscriptions.clone(),
             entry.pending_polling.clone(),
@@ -755,7 +762,9 @@ async fn restore_monitoring(
     }
     log::info!(
         "Restoring {} subscription + {} polling nodes for {}",
-        sub_nodes.len(), poll_nodes.len(), conn_id
+        sub_nodes.len(),
+        poll_nodes.len(),
+        conn_id
     );
 
     let ids: Vec<String> = sub_nodes.iter().map(|n| n.node_id.clone()).collect();

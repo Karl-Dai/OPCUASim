@@ -53,6 +53,8 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
             );
             let mut low = node.eu_range_low;
             let mut high = node.eu_range_high;
+            // Use `|` not `||` (non-short-circuit): both DragValues must render every
+            // frame; `||` would skip the second add() call when the first changed.
             if ui
                 .add(egui::DragValue::new(&mut low).speed(0.1).range(-1e9..=1e9))
                 .changed()

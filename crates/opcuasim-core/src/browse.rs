@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use opcua_client::Session;
 use log::info;
+use opcua_client::Session;
 use opcua_types::{
     AttributeId, BrowseDescription, BrowseDirection, ByteString, DataValue, NodeClass, NodeId,
-    NumericRange, ReadValueId, ReferenceTypeId, StatusCode, TimestampsToReturn,
-    UAString, Variant, WriteValue,
+    NumericRange, ReadValueId, ReferenceTypeId, StatusCode, TimestampsToReturn, UAString, Variant,
+    WriteValue,
 };
 
 use crate::error::OpcUaSimError;
@@ -23,7 +23,8 @@ pub async fn browse_node(
     node_id: Option<&str>,
 ) -> Result<Vec<BrowseResultItem>, OpcUaSimError> {
     let target_node = match node_id {
-        Some(id) => id.parse::<NodeId>()
+        Some(id) => id
+            .parse::<NodeId>()
             .map_err(|e| OpcUaSimError::BrowseError(format!("Invalid node id '{}': {}", id, e)))?,
         None => NodeId::objects_folder_id(),
     };
@@ -99,6 +100,12 @@ pub async fn browse_node(
                     node_id,
                     MAX_TOTAL_REFERENCES
                 );
+                if !next_cp.is_null() {
+                    // Release the server-held continuation point per Part 4 5.8.3.
+                    if let Err(e) = session.browse_next(true, &[next_cp]).await {
+                        log::warn!("Failed to release browse continuation point: {e}");
+                    }
+                }
                 return Ok(items);
             }
         }
@@ -138,7 +145,10 @@ pub async fn collect_variables(
                 }
             }
             Err(e) => {
-                info!("Skipping node {} during variable collection: {}", current_id, e);
+                info!(
+                    "Skipping node {} during variable collection: {}",
+                    current_id, e
+                );
                 continue;
             }
         }
@@ -153,7 +163,8 @@ pub async fn read_node_attributes(
     session: &Arc<Session>,
     node_id: &str,
 ) -> Result<NodeAttributes, OpcUaSimError> {
-    let target_node = node_id.parse::<NodeId>()
+    let target_node = node_id
+        .parse::<NodeId>()
         .map_err(|e| OpcUaSimError::ReadError(format!("Invalid node id '{}': {}", node_id, e)))?;
 
     // Read multiple attributes: DisplayName, Description, DataType, Value, AccessLevel
@@ -170,17 +181,20 @@ pub async fn read_node_attributes(
         .await
         .map_err(|e| OpcUaSimError::ReadError(format!("Read failed: {}", e)))?;
 
-    let display_name = values.first()
+    let display_name = values
+        .first()
         .and_then(|dv| dv.value.as_ref())
         .map(|v| format!("{}", v))
         .unwrap_or_else(|| node_id.to_string());
 
-    let description = values.get(1)
+    let description = values
+        .get(1)
         .and_then(|dv| dv.value.as_ref())
         .map(|v| format!("{}", v))
         .unwrap_or_default();
 
-    let data_type = values.get(2)
+    let data_type = values
+        .get(2)
         .and_then(|dv| dv.value.as_ref())
         .map(|v| format!("{}", v))
         .unwrap_or_else(|| "Unknown".to_string());
@@ -198,7 +212,8 @@ pub async fn read_node_attributes(
         .and_then(|dv| dv.source_timestamp.as_ref())
         .map(|t| t.to_string());
 
-    let access_level = values.get(4)
+    let access_level = values
+        .get(4)
         .and_then(|dv| dv.value.as_ref())
         .map(|v| format!("{}", v))
         .unwrap_or_else(|| "0".to_string());
@@ -218,26 +233,58 @@ pub async fn read_node_attributes(
 /// Convert a user-entered string to the appropriate OPC UA Variant based on the data type name.
 fn string_to_variant(value: &str, data_type: &str) -> Result<Variant, OpcUaSimError> {
     let err = |msg: &dyn std::fmt::Display| {
-        OpcUaSimError::WriteError(format!("Cannot convert '{}' to {}: {}", value, data_type, msg))
+        OpcUaSimError::WriteError(format!(
+            "Cannot convert '{}' to {}: {}",
+            value, data_type, msg
+        ))
     };
     match data_type {
         "Boolean" => match value.eq_ignore_ascii_case("true") || value == "1" {
             true => Ok(Variant::Boolean(true)),
-            false if value.eq_ignore_ascii_case("false") || value == "0" => Ok(Variant::Boolean(false)),
+            false if value.eq_ignore_ascii_case("false") || value == "0" => {
+                Ok(Variant::Boolean(false))
+            }
             _ => Err(err(&"expected true/false/1/0")),
         },
         "SByte" => value.parse::<i8>().map(Variant::SByte).map_err(|e| err(&e)),
         "Byte" => value.parse::<u8>().map(Variant::Byte).map_err(|e| err(&e)),
-        "Int16" => value.parse::<i16>().map(Variant::Int16).map_err(|e| err(&e)),
-        "UInt16" => value.parse::<u16>().map(Variant::UInt16).map_err(|e| err(&e)),
-        "Int32" => value.parse::<i32>().map(Variant::Int32).map_err(|e| err(&e)),
-        "UInt32" => value.parse::<u32>().map(Variant::UInt32).map_err(|e| err(&e)),
-        "Int64" => value.parse::<i64>().map(Variant::Int64).map_err(|e| err(&e)),
-        "UInt64" => value.parse::<u64>().map(Variant::UInt64).map_err(|e| err(&e)),
-        "Float" => value.parse::<f32>().map(Variant::Float).map_err(|e| err(&e)),
-        "Double" => value.parse::<f64>().map(Variant::Double).map_err(|e| err(&e)),
+        "Int16" => value
+            .parse::<i16>()
+            .map(Variant::Int16)
+            .map_err(|e| err(&e)),
+        "UInt16" => value
+            .parse::<u16>()
+            .map(Variant::UInt16)
+            .map_err(|e| err(&e)),
+        "Int32" => value
+            .parse::<i32>()
+            .map(Variant::Int32)
+            .map_err(|e| err(&e)),
+        "UInt32" => value
+            .parse::<u32>()
+            .map(Variant::UInt32)
+            .map_err(|e| err(&e)),
+        "Int64" => value
+            .parse::<i64>()
+            .map(Variant::Int64)
+            .map_err(|e| err(&e)),
+        "UInt64" => value
+            .parse::<u64>()
+            .map(Variant::UInt64)
+            .map_err(|e| err(&e)),
+        "Float" => value
+            .parse::<f32>()
+            .map(Variant::Float)
+            .map_err(|e| err(&e)),
+        "Double" => value
+            .parse::<f64>()
+            .map(Variant::Double)
+            .map_err(|e| err(&e)),
         "String" => Ok(Variant::String(UAString::from(value))),
-        _ => Err(OpcUaSimError::WriteError(format!("Unsupported data type for write: {}", data_type))),
+        _ => Err(OpcUaSimError::WriteError(format!(
+            "Unsupported data type for write: {}",
+            data_type
+        ))),
     }
 }
 
@@ -248,11 +295,15 @@ pub async fn write_node_value(
     value: &str,
     data_type: &str,
 ) -> Result<(), OpcUaSimError> {
-    let target_node = node_id.parse::<NodeId>()
+    let target_node = node_id
+        .parse::<NodeId>()
         .map_err(|e| OpcUaSimError::WriteError(format!("Invalid node id '{}': {}", node_id, e)))?;
 
     let variant = string_to_variant(value, data_type)?;
-    info!("Writing {} = {:?} (data_type={})", node_id, variant, data_type);
+    info!(
+        "Writing {} = {:?} (data_type={})",
+        node_id, variant, data_type
+    );
 
     let write_value = WriteValue {
         node_id: target_node.clone(),
@@ -266,29 +317,38 @@ pub async fn write_node_value(
         .await
         .map_err(|e| OpcUaSimError::WriteError(format!("Write request failed: {}", e)))?;
 
-    let status = results.first().copied().unwrap_or(StatusCode::BadUnexpectedError);
+    let status = results
+        .first()
+        .copied()
+        .unwrap_or(StatusCode::BadUnexpectedError);
     if !status.is_good() {
         // Read AccessLevel + UserAccessLevel for diagnostics
         let diag_reads = vec![
             ReadValueId::new(target_node.clone(), AttributeId::AccessLevel),
             ReadValueId::new(target_node, AttributeId::UserAccessLevel),
         ];
-        let diag = session.read(&diag_reads, TimestampsToReturn::Neither, 0.0).await.ok();
-        let (al, ual) = diag.map(|v| {
-            let fmt = |dv: Option<&opcua_types::DataValue>| -> String {
-                dv.and_then(|d| d.value.as_ref())
-                    .map(|v| format!("{v}"))
-                    .unwrap_or_else(|| {
-                        dv.and_then(|d| d.status.as_ref())
-                            .map(|s| format!("{s}"))
-                            .unwrap_or("?".into())
-                    })
-            };
-            (fmt(v.first()), fmt(v.get(1)))
-        }).unwrap_or(("?".into(), "?".into()));
-        return Err(OpcUaSimError::WriteError(
-            format!("{} (AccessLevel={}, UserAccessLevel={})", status, al, ual)
-        ));
+        let diag = session
+            .read(&diag_reads, TimestampsToReturn::Neither, 0.0)
+            .await
+            .ok();
+        let (al, ual) = diag
+            .map(|v| {
+                let fmt = |dv: Option<&opcua_types::DataValue>| -> String {
+                    dv.and_then(|d| d.value.as_ref())
+                        .map(|v| format!("{v}"))
+                        .unwrap_or_else(|| {
+                            dv.and_then(|d| d.status.as_ref())
+                                .map(|s| format!("{s}"))
+                                .unwrap_or("?".into())
+                        })
+                };
+                (fmt(v.first()), fmt(v.get(1)))
+            })
+            .unwrap_or(("?".into(), "?".into()));
+        return Err(OpcUaSimError::WriteError(format!(
+            "{} (AccessLevel={}, UserAccessLevel={})",
+            status, al, ual
+        )));
     }
 
     info!("Write succeeded: {} = {} ({})", node_id, value, data_type);
