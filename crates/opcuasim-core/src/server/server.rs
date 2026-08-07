@@ -243,8 +243,11 @@ impl OpcUaServer {
         let sim_engine = Arc::new(SimulationEngine::new());
         sim_engine.register_nodes(nodes, ns_index).await;
         sim_engine.set_history_store(history.clone()).await;
-        sim_engine.start(sim_nm, subscriptions);
+        sim_engine.start(sim_nm, subscriptions.clone());
         *self.simulation_engine.write().await = Some(sim_engine.clone());
+
+        // Register preset demo methods
+        let _ = super::methods::register_demo_methods(self, subscriptions).await;
 
         // Run server in background task
         let state = self.state.clone();
