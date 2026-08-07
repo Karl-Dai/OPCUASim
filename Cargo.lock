@@ -2789,6 +2789,7 @@ dependencies = [
  "async-opcua-server",
  "async-opcua-types",
  "chrono",
+ "env_logger",
  "log",
  "pem",
  "rand",
