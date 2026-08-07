@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
-use tokio::sync::RwLock as TokioRwLock;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -12,10 +11,10 @@ use opcuasim_core::cert_manager::{
     self, delete_certificate, list_certificates, move_certificate, CertRole,
 };
 use opcuasim_core::client::{ConnectionState, OpcUaConnection};
+use opcuasim_core::config::{AuthConfig, ConnectionConfig, ConnectionProjectEntry, ProjectFile};
 use opcuasim_core::discovery::discover_endpoints;
 use opcuasim_core::history::history_read_raw;
 use opcuasim_core::method::{call_method, read_method_arguments};
-use opcuasim_core::config::{AuthConfig, ConnectionConfig, ConnectionProjectEntry, ProjectFile};
 use opcuasim_core::node::{
     AccessMode, DataChangeFilterCfg, DataChangeTriggerKind, DeadbandKind, MonitoredNode, NodeGroup,
 };
@@ -197,9 +196,16 @@ async fn handle_cmd(
             value,
             data_type,
             req_id,
-        } => write_value(conn_id, node_id, value, data_type, req_id, &state, &event_tx).await,
+        } => {
+            write_value(
+                conn_id, node_id, value, data_type, req_id, &state, &event_tx,
+            )
+            .await
+        }
         UiCommand::ClearCommLogs(conn_id) => clear_logs(conn_id, &state, &event_tx),
-        UiCommand::ExportCommLogs { conn_id, path } => export_logs(conn_id, path, &state, &event_tx),
+        UiCommand::ExportCommLogs { conn_id, path } => {
+            export_logs(conn_id, path, &state, &event_tx)
+        }
         UiCommand::CreateGroup(name) => create_group(name, &state, &event_tx),
         UiCommand::DeleteGroup(id) => delete_group(id, &state, &event_tx),
         UiCommand::AddNodesToGroup { group_id, node_ids } => {
@@ -334,7 +340,8 @@ async fn create_connection(
         auth: auth_from_req(req.auth),
         timeout_ms: req.timeout_ms,
     };
-    let connection = OpcUaConnection::new(config);
+    let connection = Arc::new(OpcUaConnection::new(config));
+    let session_holder = connection.get_session_holder();
     {
         let mut conns = state.connections.write().map_err(|e| e.to_string())?;
         conns.insert(
@@ -342,7 +349,9 @@ async fn create_connection(
             ConnectionEntry {
                 connection,
                 subscription_mgr: SubscriptionManager::new(),
-                polling_mgr: PollingManager::new(Arc::new(TokioRwLock::new(None))),
+                polling_mgr: Arc::new(PollingManager::new(session_holder)),
+                pending_subscriptions: Vec::new(),
+                pending_polling: Vec::new(),
             },
         );
     }
@@ -354,37 +363,49 @@ async fn connect(
     state: &Arc<BackendState>,
     event_tx: &UnboundedSender<BackendEvent>,
 ) -> Result<(), String> {
-    let (state_arc, config_clone) = {
+    let conn_arc = {
         let conns = state.connections.read().map_err(|e| e.to_string())?;
         let entry = conns.get(&id).ok_or("Connection not found")?;
-        (entry.connection.state.clone(), entry.connection.config.clone())
+        entry.connection.clone()
     };
 
-    *state_arc.write().await = ConnectionState::Connecting;
+    *conn_arc.state.write().await = ConnectionState::Connecting;
     let _ = event_tx.send(BackendEvent::ConnectionStateChanged {
         id: id.clone(),
         state: "Connecting".to_string(),
     });
 
-    let temp_conn = OpcUaConnection::new(config_clone);
-    match temp_conn.connect().await {
+    match conn_arc.connect().await {
         Ok(()) => {
-            {
-                let mut conns = state.connections.write().map_err(|e| e.to_string())?;
-                if let Some(entry) = conns.get_mut(&id) {
-                    entry.connection = temp_conn;
-                    entry.subscription_mgr = SubscriptionManager::new();
-                }
-            }
-            *state_arc.write().await = ConnectionState::Connected;
+            *conn_arc.state.write().await = ConnectionState::Connected;
             let _ = event_tx.send(BackendEvent::ConnectionStateChanged {
                 id: id.clone(),
                 state: "Connected".to_string(),
             });
+
+            let cb_state = state.clone();
+            let cb_conn = id.clone();
+            let cb_tx = event_tx.clone();
+            let on_state_change = move |s: ConnectionState| {
+                if s == ConnectionState::Connected {
+                    let st = cb_state.clone();
+                    let cid = cb_conn.clone();
+                    let tx = cb_tx.clone();
+                    tokio::spawn(async move {
+                        restore_monitoring(&cid, &st, &tx).await;
+                    });
+                }
+            };
+            let conn_for_loop = conn_arc.clone();
+            tokio::spawn(async move {
+                conn_for_loop.start_reconnect_loop(on_state_change).await;
+            });
+
+            restore_monitoring(&id, state, event_tx).await;
             list_connections(state, event_tx).await
         }
         Err(e) => {
-            *state_arc.write().await = ConnectionState::Disconnected;
+            *conn_arc.state.write().await = ConnectionState::Disconnected;
             let _ = event_tx.send(BackendEvent::ConnectionStateChanged {
                 id: id.clone(),
                 state: "Disconnected".to_string(),
@@ -399,19 +420,14 @@ async fn disconnect(
     state: &Arc<BackendState>,
     event_tx: &UnboundedSender<BackendEvent>,
 ) -> Result<(), String> {
-    let (state_arc, config) = {
+    let conn_arc = {
         let conns = state.connections.read().map_err(|e| e.to_string())?;
         let entry = conns.get(&id).ok_or("Connection not found")?;
-        (entry.connection.state.clone(), entry.connection.config.clone())
+        entry.connection.clone()
     };
 
-    {
-        let mut conns = state.connections.write().map_err(|e| e.to_string())?;
-        if let Some(entry) = conns.get_mut(&id) {
-            entry.connection = OpcUaConnection::new(config);
-        }
-    }
-    *state_arc.write().await = ConnectionState::Disconnected;
+    let _ = conn_arc.disconnect().await;
+    *conn_arc.state.write().await = ConnectionState::Disconnected;
     let _ = event_tx.send(BackendEvent::ConnectionStateChanged {
         id: id.clone(),
         state: "Disconnected".to_string(),
@@ -546,22 +562,48 @@ async fn add_monitored_nodes(
         })
         .collect();
 
-    let (sub_mgr, session_holder) = {
+    let (sub_nodes, poll_nodes): (Vec<MonitoredNode>, Vec<MonitoredNode>) =
+        monitored.into_iter().partition(|n| {
+            matches!(n.access_mode, AccessMode::Subscription { .. })
+        });
+
+    {
+        let mut conns = state.connections.write().map_err(|e| e.to_string())?;
+        let entry = conns.get_mut(&conn_id).ok_or("Connection not found")?;
+        entry.pending_subscriptions.extend(sub_nodes.clone());
+        entry.pending_polling.extend(poll_nodes.clone());
+    }
+
+    let (sub_mgr, poll_mgr, session_holder) = {
         let conns = state.connections.read().map_err(|e| e.to_string())?;
         let entry = conns.get(&conn_id).ok_or("Connection not found")?;
         (
             entry.subscription_mgr.clone(),
+            entry.polling_mgr.clone(),
             entry.connection.get_session_holder(),
         )
     };
 
     let session_guard = session_holder.read().await;
     let session = session_guard.as_ref();
-    sub_mgr
-        .add_nodes(monitored, session)
-        .await
-        .map_err(|e| e.to_string())?;
+    if !sub_nodes.is_empty() {
+        sub_mgr
+            .add_nodes(sub_nodes, session)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     drop(session_guard);
+
+    for node in poll_nodes {
+        let interval_ms = match node.access_mode {
+            AccessMode::Polling { interval_ms } => interval_ms,
+            AccessMode::Subscription { .. } => 1000,
+        };
+        poll_mgr
+            .add_polling_node(node, interval_ms)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
     let _ = event_tx.send(BackendEvent::Toast {
         level: ToastLevel::Info,
@@ -620,19 +662,46 @@ async fn add_variables_under_node(
         })
         .collect();
 
-    let (sub_mgr, session_holder) = {
+    let (sub_nodes, poll_nodes): (Vec<MonitoredNode>, Vec<MonitoredNode>) =
+        nodes.into_iter().partition(|n| {
+            matches!(n.access_mode, AccessMode::Subscription { .. })
+        });
+
+    {
+        let mut conns = state.connections.write().map_err(|e| e.to_string())?;
+        let entry = conns.get_mut(&conn_id).ok_or("Connection not found")?;
+        entry.pending_subscriptions.extend(sub_nodes.clone());
+        entry.pending_polling.extend(poll_nodes.clone());
+    }
+
+    let (sub_mgr, poll_mgr, session_holder) = {
         let conns = state.connections.read().map_err(|e| e.to_string())?;
         let entry = conns.get(&conn_id).ok_or("Connection not found")?;
         (
             entry.subscription_mgr.clone(),
+            entry.polling_mgr.clone(),
             entry.connection.get_session_holder(),
         )
     };
     let session_guard = session_holder.read().await;
-    sub_mgr
-        .add_nodes(nodes, session_guard.as_ref())
-        .await
-        .map_err(|e| e.to_string())?;
+    if !sub_nodes.is_empty() {
+        sub_mgr
+            .add_nodes(sub_nodes, session_guard.as_ref())
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    drop(session_guard);
+
+    for node in poll_nodes {
+        let interval_ms = match node.access_mode {
+            AccessMode::Polling { interval_ms } => interval_ms,
+            AccessMode::Subscription { .. } => 1000,
+        };
+        poll_mgr
+            .add_polling_node(node, interval_ms)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
     let _ = event_tx.send(BackendEvent::Toast {
         level: ToastLevel::Info,
@@ -647,14 +716,73 @@ async fn remove_monitored_nodes(
     state: &Arc<BackendState>,
 ) -> Result<(), String> {
     let sub_mgr = {
-        let conns = state.connections.read().map_err(|e| e.to_string())?;
-        let entry = conns.get(&conn_id).ok_or("Connection not found")?;
+        let mut conns = state.connections.write().map_err(|e| e.to_string())?;
+        let entry = conns.get_mut(&conn_id).ok_or("Connection not found")?;
+        entry.pending_subscriptions.retain(|n| !node_ids.contains(&n.node_id));
+        entry.pending_polling.retain(|n| !node_ids.contains(&n.node_id));
         entry.subscription_mgr.clone()
     };
     sub_mgr
         .remove_nodes(&node_ids)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Re-create subscription monitored items and restart polling tasks after a
+/// (re)connect. Idempotent: remove_nodes clears stale local tracking first,
+/// then add_nodes re-inserts; add_polling_node aborts+replaces existing tasks.
+async fn restore_monitoring(
+    conn_id: &str,
+    state: &Arc<BackendState>,
+    event_tx: &UnboundedSender<BackendEvent>,
+) {
+    let (sub_nodes, poll_nodes, sub_mgr, poll_mgr, session_holder) = {
+        let conns = match state.connections.read() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let Some(entry) = conns.get(conn_id) else { return };
+        (
+            entry.pending_subscriptions.clone(),
+            entry.pending_polling.clone(),
+            entry.subscription_mgr.clone(),
+            entry.polling_mgr.clone(),
+            entry.connection.get_session_holder(),
+        )
+    };
+    if sub_nodes.is_empty() && poll_nodes.is_empty() {
+        return;
+    }
+    log::info!(
+        "Restoring {} subscription + {} polling nodes for {}",
+        sub_nodes.len(), poll_nodes.len(), conn_id
+    );
+
+    let ids: Vec<String> = sub_nodes.iter().map(|n| n.node_id.clone()).collect();
+    let _ = sub_mgr.remove_nodes(&ids).await;
+
+    let session_guard = session_holder.read().await;
+    let session = session_guard.as_ref();
+    if !sub_nodes.is_empty() {
+        if let Err(e) = sub_mgr.add_nodes(sub_nodes, session).await {
+            log::warn!("Restore subscriptions failed for {}: {}", conn_id, e);
+            let _ = event_tx.send(BackendEvent::Toast {
+                level: ToastLevel::Warn,
+                message: format!("订阅恢复失败: {e}"),
+            });
+        }
+    }
+    drop(session_guard);
+
+    for node in poll_nodes {
+        let interval_ms = match node.access_mode {
+            AccessMode::Polling { interval_ms } => interval_ms,
+            AccessMode::Subscription { .. } => 1000,
+        };
+        if let Err(e) = poll_mgr.add_polling_node(node, interval_ms).await {
+            log::warn!("Restore polling failed for {}: {}", conn_id, e);
+        }
+    }
 }
 
 fn browse_item_to_dto(item: opcuasim_core::node::BrowseResultItem) -> BrowseItem {
@@ -707,10 +835,7 @@ async fn write_value(
     opcuasim_core::browse::write_node_value(&session, &node_id, &value, &data_type)
         .await
         .map_err(|e| e.to_string())?;
-    let _ = event_tx.send(BackendEvent::WriteOk {
-        req_id,
-        node_id,
-    });
+    let _ = event_tx.send(BackendEvent::WriteOk { req_id, node_id });
     Ok(())
 }
 
@@ -873,12 +998,16 @@ async fn load_project(
                 auth: ce.auth.clone(),
                 timeout_ms: ce.timeout_ms,
             };
+            let connection = Arc::new(OpcUaConnection::new(config));
+            let session_holder = connection.get_session_holder();
             conns.insert(
                 id,
                 ConnectionEntry {
-                    connection: OpcUaConnection::new(config),
+                    connection,
                     subscription_mgr: SubscriptionManager::new(),
-                    polling_mgr: PollingManager::new(Arc::new(TokioRwLock::new(None))),
+                    polling_mgr: Arc::new(PollingManager::new(session_holder)),
+                    pending_subscriptions: Vec::new(),
+                    pending_polling: Vec::new(),
                 },
             );
         }
@@ -1034,7 +1163,11 @@ async fn do_list_certs(
             valid_to: c.valid_to,
         })
         .collect();
-    let _ = event_tx.send(BackendEvent::CertificateList { req_id, role, certs });
+    let _ = event_tx.send(BackendEvent::CertificateList {
+        req_id,
+        role,
+        certs,
+    });
     Ok(())
 }
 
@@ -1164,16 +1297,46 @@ fn string_to_variant(data_type: &str, value: &str) -> Result<opcua_types::Varian
             .parse::<bool>()
             .map(Variant::Boolean)
             .map_err(|e| e.to_string()),
-        "SByte" => value.parse::<i8>().map(Variant::SByte).map_err(|e| e.to_string()),
-        "Byte" => value.parse::<u8>().map(Variant::Byte).map_err(|e| e.to_string()),
-        "Int16" => value.parse::<i16>().map(Variant::Int16).map_err(|e| e.to_string()),
-        "UInt16" => value.parse::<u16>().map(Variant::UInt16).map_err(|e| e.to_string()),
-        "Int32" => value.parse::<i32>().map(Variant::Int32).map_err(|e| e.to_string()),
-        "UInt32" => value.parse::<u32>().map(Variant::UInt32).map_err(|e| e.to_string()),
-        "Int64" => value.parse::<i64>().map(Variant::Int64).map_err(|e| e.to_string()),
-        "UInt64" => value.parse::<u64>().map(Variant::UInt64).map_err(|e| e.to_string()),
-        "Float" => value.parse::<f32>().map(Variant::Float).map_err(|e| e.to_string()),
-        "Double" => value.parse::<f64>().map(Variant::Double).map_err(|e| e.to_string()),
+        "SByte" => value
+            .parse::<i8>()
+            .map(Variant::SByte)
+            .map_err(|e| e.to_string()),
+        "Byte" => value
+            .parse::<u8>()
+            .map(Variant::Byte)
+            .map_err(|e| e.to_string()),
+        "Int16" => value
+            .parse::<i16>()
+            .map(Variant::Int16)
+            .map_err(|e| e.to_string()),
+        "UInt16" => value
+            .parse::<u16>()
+            .map(Variant::UInt16)
+            .map_err(|e| e.to_string()),
+        "Int32" => value
+            .parse::<i32>()
+            .map(Variant::Int32)
+            .map_err(|e| e.to_string()),
+        "UInt32" => value
+            .parse::<u32>()
+            .map(Variant::UInt32)
+            .map_err(|e| e.to_string()),
+        "Int64" => value
+            .parse::<i64>()
+            .map(Variant::Int64)
+            .map_err(|e| e.to_string()),
+        "UInt64" => value
+            .parse::<u64>()
+            .map(Variant::UInt64)
+            .map_err(|e| e.to_string()),
+        "Float" => value
+            .parse::<f32>()
+            .map(Variant::Float)
+            .map_err(|e| e.to_string()),
+        "Double" => value
+            .parse::<f64>()
+            .map(Variant::Double)
+            .map_err(|e| e.to_string()),
         "String" => Ok(Variant::String(value.into())),
         other => Err(format!("unsupported method arg type: {other}")),
     }

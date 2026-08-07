@@ -2,15 +2,18 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use opcuasim_core::client::OpcUaConnection;
-use opcuasim_core::node::NodeGroup;
+use opcuasim_core::node::{MonitoredNode, NodeGroup};
 use opcuasim_core::polling::PollingManager;
 use opcuasim_core::subscription::SubscriptionManager;
 
 pub struct ConnectionEntry {
-    pub connection: OpcUaConnection,
+    pub connection: Arc<OpcUaConnection>,
     pub subscription_mgr: SubscriptionManager,
-    #[allow(dead_code)]
-    pub polling_mgr: PollingManager,
+    pub polling_mgr: Arc<PollingManager>,
+    /// Subscription-mode nodes to re-create after a reconnect.
+    pub pending_subscriptions: Vec<MonitoredNode>,
+    /// Polling-mode nodes to restart after a reconnect.
+    pub pending_polling: Vec<MonitoredNode>,
 }
 
 #[derive(Default)]
