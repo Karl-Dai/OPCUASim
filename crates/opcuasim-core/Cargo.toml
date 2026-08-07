@@ -5,10 +5,12 @@ edition = "2021"
 
 [dependencies]
 async-opcua-client = "0.18"
+async-opcua-core = "0.18"
 async-opcua-server = "0.18"
 async-opcua-types = "0.18"
 async-opcua-nodes = "0.18"
 async-opcua-crypto = "0.18"
+async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 serde = { version = "1.0", features = ["derive"] }
