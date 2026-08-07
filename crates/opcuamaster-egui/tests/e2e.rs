@@ -70,6 +70,7 @@ async fn master_full_flow() {
         anonymous_enabled: true,
         max_sessions: 10,
         max_subscriptions_per_session: 10,
+        history_buffer_size: 10_000,
     };
     let folders = vec![ServerFolder {
         node_id: "Demo".into(),
@@ -406,6 +407,7 @@ async fn deadband_reduces_samples() {
         anonymous_enabled: true,
         max_sessions: 10,
         max_subscriptions_per_session: 10,
+        history_buffer_size: 10_000,
     };
     let folders = vec![ServerFolder {
         node_id: "Demo".into(),
@@ -541,6 +543,7 @@ async fn method_call_echo() {
         anonymous_enabled: true,
         max_sessions: 10,
         max_subscriptions_per_session: 10,
+        history_buffer_size: 10_000,
     };
     server.start(&config, &[], &[]).await.expect("server start");
     tokio::time::sleep(Duration::from_millis(500)).await;

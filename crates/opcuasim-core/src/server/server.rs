@@ -52,8 +52,7 @@ fn build_server(
 ) -> Result<BuildResult, OpcUaSimError> {
     // Build user tokens
     let mut user_token_ids: Vec<String> = Vec::new();
-    // TODO(Task 5): read config.history_buffer_size instead of hard-coded 10_000.
-    let history = Arc::new(HistoryStore::new(10_000));
+    let history = Arc::new(HistoryStore::new(config.history_buffer_size));
     let ns_meta = NamespaceMetadata {
         namespace_uri: NAMESPACE_URI.to_string(),
         ..Default::default()
