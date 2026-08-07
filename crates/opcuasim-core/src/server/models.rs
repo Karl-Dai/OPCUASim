@@ -106,12 +106,14 @@ pub struct ServerNode {
     pub simulation: SimulationMode,
     pub update_seq: u64,
     pub current_value: Option<String>,
-    /// EU Range property (low). Default 0.0; required for Percent deadband.
     #[serde(default)]
     pub eu_range_low: f64,
-    /// EU Range property (high). Default 100.0; required for Percent deadband.
-    #[serde(default)]
+    #[serde(default = "default_eu_range_high")]
     pub eu_range_high: f64,
+}
+
+fn default_eu_range_high() -> f64 {
+    100.0
 }
 
 /// A folder node in the server address space.
