@@ -115,6 +115,31 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
         );
         add_node_form(ui, model, backend);
     });
+
+    ui.add_space(4.0);
+
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("⚙ 历史缓冲容量(条/节点):")
+                .small()
+                .color(theme::TEXT_MUTED()),
+        );
+        let mut cap = model.config.history_buffer_size;
+        if ui
+            .add(egui::DragValue::new(&mut cap).range(0..=1_000_000usize))
+            .changed()
+        {
+            model.config.history_buffer_size = cap;
+            backend.send(UiCommand::UpdateConfig(model.config.clone()));
+        }
+        if cap == 0 {
+            ui.label(
+                egui::RichText::new("(已禁用)")
+                    .small()
+                    .color(theme::TEXT_FAINT()),
+            );
+        }
+    });
 }
 
 fn add_node_form(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {

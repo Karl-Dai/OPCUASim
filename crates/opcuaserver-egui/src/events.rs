@@ -25,6 +25,7 @@ pub enum UiCommand {
     },
     LoadProject(std::path::PathBuf),
     SaveProject(std::path::PathBuf),
+    UpdateConfig(ServerConfig),
 }
 
 #[derive(Debug, Clone)]
