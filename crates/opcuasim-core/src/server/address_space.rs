@@ -1,6 +1,7 @@
+use opcua_nodes::ReferenceDirection;
 use opcua_server::address_space::{AddressSpace, VariableBuilder};
 use opcua_types::{
-    LocalizedText, NodeId, QualifiedName, Variant, UAString,
+    DataTypeId, LocalizedText, NodeId, QualifiedName, ReferenceTypeId, Variant, UAString,
 };
 
 use super::models::{DataType, ServerFolder, ServerNode, SimulationMode};
@@ -102,7 +103,31 @@ pub fn add_variable_node(
         builder = builder.writable();
     }
 
-    builder.insert(address_space)
+    let inserted = builder.insert(address_space);
+    if inserted && node.data_type.is_numeric() {
+        add_eu_range_property(address_space, namespace_index, node);
+    }
+    inserted
+}
+
+/// Add the EURange property (array [low, high] of Double) to a variable node.
+/// Percent deadband filtering requires this property (OPC UA Part 4 7.17.4).
+fn add_eu_range_property(
+    address_space: &mut AddressSpace,
+    namespace_index: u16,
+    node: &ServerNode,
+) {
+    let var_id = make_node_id(namespace_index, &node.node_id);
+    let prop_id = NodeId::new(namespace_index, format!("{}_EURange", node.node_id));
+    let prop = VariableBuilder::new(&prop_id, "EURange", "EURange")
+        .data_type(DataTypeId::Double)
+        .value(Variant::from(vec![node.eu_range_low, node.eu_range_high]))
+        .value_rank(1)
+        .build();
+    address_space.insert(
+        prop,
+        Some(&[(&var_id, &ReferenceTypeId::HasProperty, ReferenceDirection::Inverse)]),
+    );
 }
 
 /// Remove a node from the address space.

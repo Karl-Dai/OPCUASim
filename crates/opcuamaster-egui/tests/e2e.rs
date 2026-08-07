@@ -91,6 +91,8 @@ async fn master_full_flow() {
             },
             update_seq: 0,
             current_value: None,
+            eu_range_low: 0.0,
+            eu_range_high: 100.0,
         },
         ServerNode {
             node_id: "Demo.Setpoint".into(),
@@ -101,6 +103,8 @@ async fn master_full_flow() {
             simulation: SimulationMode::Static { value: "0".into() },
             update_seq: 0,
             current_value: None,
+            eu_range_low: 0.0,
+            eu_range_high: 100.0,
         },
     ];
     server
@@ -341,6 +345,8 @@ async fn deadband_reduces_samples() {
         },
         update_seq: 0,
         current_value: None,
+        eu_range_low: 0.0,
+        eu_range_high: 100.0,
     }];
     server.start(&config, &folders, &nodes).await.expect("server start");
     tokio::time::sleep(Duration::from_millis(500)).await;

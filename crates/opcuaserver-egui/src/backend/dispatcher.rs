@@ -131,6 +131,8 @@ async fn handle_cmd(
                 simulation: req.simulation,
                 update_seq: 0,
                 current_value: None,
+                eu_range_low: 0.0,
+                eu_range_high: 100.0,
             };
             if let Some(nm) = state.server.node_manager().await {
                 let ns = state.server.namespace_index().await;
