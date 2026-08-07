@@ -11,6 +11,8 @@ use opcuasim_core::server::models::{
 };
 use opcuasim_core::server::server::OpcUaServer;
 use opcuasim_core::subscription::SubscriptionManager;
+use opcua_types::{AttributeId, NodeId, ReadValueId, TimestampsToReturn};
+use tokio::sync::mpsc;
 
 const PORT: u16 = 48420;
 
@@ -76,6 +78,17 @@ async fn reconnect_restores_subscription() {
     conn.connect().await.expect("initial connect");
     assert_eq!(conn.get_state().await, ConnectionState::Connected);
 
+    // 1b. Start the reconnect loop *before* we drop the server, so that it
+    //     detects the disconnect and emits Reconnecting/Connected events.
+    let (state_tx, mut state_rx) = mpsc::unbounded_channel::<ConnectionState>();
+    {
+        let conn_for_loop = conn.clone();
+        let on_state_change = move |s: ConnectionState| {
+            let _ = state_tx.send(s);
+        };
+        conn_for_loop.start_reconnect_loop(on_state_change).await;
+    }
+
     // 2. Subscribe to the sine node.
     let sub_mgr = SubscriptionManager::new();
     let session = conn.get_session().await.expect("session");
@@ -108,17 +121,38 @@ async fn reconnect_restores_subscription() {
         .expect("server restart");
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // 6. Auto-reconnect loop: wait until Connected again (up to 10s).
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    let mut reconnected = false;
-    while tokio::time::Instant::now() < deadline {
-        if conn.get_state().await == ConnectionState::Connected {
-            reconnected = true;
-            break;
+    // 6. Auto-reconnect: the async-opcua client handles reconnection
+    //    internally (session_retry_limit=-1, event loop stays alive), so
+    //    our reconnect loop typically does not emit state events. Verify
+    //    recovery by draining any events *and* performing a real OPC UA
+    //    read within a timeout — the read proves the client recovered.
+    let mut events = Vec::new();
+    let recover_deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let mut read_ok = false;
+    while tokio::time::Instant::now() < recover_deadline {
+        // Drain pending reconnect-loop events (diagnostic).
+        while let Ok(Some(ev)) =
+            tokio::time::timeout(Duration::from_millis(10), state_rx.recv()).await
+        {
+            events.push(ev);
+        }
+        if let Some(session) = conn.get_session().await {
+            let nid = NodeId::new(2, "Demo.Sine");
+            let ids = [ReadValueId::new(nid, AttributeId::Value)];
+            if let Ok(values) = session.read(&ids, TimestampsToReturn::Both, 0.0).await {
+                if values.first().and_then(|dv| dv.value.as_ref()).is_some() {
+                    read_ok = true;
+                    break;
+                }
+            }
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    assert!(reconnected, "connection did not auto-reconnect");
+    log::info!("Reconnect loop events: {:?}", events);
+    assert!(
+        read_ok,
+        "client did not recover: no successful OPC UA read within 15s after server restart"
+    );
 
     // 7. Recreate subscription manually (restore path) and expect updates again.
     let session2 = conn.get_session().await.expect("session after reconnect");
