@@ -144,7 +144,10 @@ impl SimulationEngine {
                                         dv.source_timestamp = Some(now);
                                         dv.server_timestamp = Some(now);
 
-                                        if let Some(store) = hs.read().await.as_ref().cloned() {
+                                        if let Some(store) = {
+                                            let guard = hs.read().await;
+                                            guard.as_ref().cloned()
+                                        } {
                                             store.record(&node_state.opcua_node_id, dv.clone()).await;
                                         }
 
