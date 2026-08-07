@@ -238,11 +238,12 @@ impl OpcUaServer {
         *self.namespace_index.write().await = ns_index;
         *self.handle.write().await = Some(handle);
         *self.node_manager.write().await = Some(sim_nm.clone());
-        *self.history_store.write().await = Some(history);
+        *self.history_store.write().await = Some(history.clone());
 
         // Start simulation engine
         let sim_engine = Arc::new(SimulationEngine::new());
         sim_engine.register_nodes(nodes, ns_index).await;
+        sim_engine.set_history_store(history.clone()).await;
         sim_engine.start(sim_nm, subscriptions);
         *self.simulation_engine.write().await = Some(sim_engine.clone());
 
