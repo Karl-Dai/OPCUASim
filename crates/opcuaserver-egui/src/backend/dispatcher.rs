@@ -131,8 +131,8 @@ async fn handle_cmd(
                 simulation: req.simulation,
                 update_seq: 0,
                 current_value: None,
-                eu_range_low: 0.0,
-                eu_range_high: 100.0,
+                eu_range_low: req.eu_range_low,
+                eu_range_high: req.eu_range_high,
             };
             if let Some(nm) = state.server.node_manager().await {
                 let ns = state.server.namespace_index().await;
@@ -164,6 +164,8 @@ async fn handle_cmd(
             data_type,
             writable,
             simulation,
+            eu_range_low,
+            eu_range_high,
         } => {
             {
                 let mut nodes = state.nodes.write().unwrap();
@@ -182,6 +184,12 @@ async fn handle_cmd(
                 if let Some(s) = simulation {
                     n.simulation = s;
                 }
+                if let Some(low) = eu_range_low {
+                    n.eu_range_low = low;
+                }
+                if let Some(high) = eu_range_high {
+                    n.eu_range_high = high;
+                }
             }
             let _ = event_tx.send(build_address_space_event(state));
         }
@@ -193,8 +201,7 @@ async fn handle_cmd(
                 folders: state.folders.read().unwrap().clone(),
                 nodes: state.nodes.read().unwrap().clone(),
             };
-            let json =
-                serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
+            let json = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
             std::fs::write(&path, json).map_err(|e| e.to_string())?;
             let _ = event_tx.send(BackendEvent::Toast {
                 level: ToastLevel::Info,
@@ -241,6 +248,8 @@ fn build_address_space_event(state: &Arc<BackendState>) -> BackendEvent {
                 writable: n.writable,
                 simulation: n.simulation.clone(),
                 current_value: n.current_value.clone(),
+                eu_range_low: n.eu_range_low,
+                eu_range_high: n.eu_range_high,
             })
             .collect(),
     };
@@ -318,4 +327,3 @@ async fn sim_timer(
         }
     }
 }
-
