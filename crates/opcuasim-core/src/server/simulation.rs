@@ -6,7 +6,7 @@ use log::info;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use opcua_server::node_manager::memory::SimpleNodeManager;
+use opcua_server::node_manager::memory::{InMemoryNodeManager, InMemoryNodeManagerImpl};
 use opcua_server::SubscriptionCache;
 use opcua_types::{DataValue, DateTime, NodeId, NumericRange};
 
@@ -67,11 +67,13 @@ impl SimulationEngine {
     }
 
     /// Start the simulation engine. Spawns one tokio task per interval group.
-    pub fn start(
+    pub fn start<T>(
         &self,
-        node_manager: Arc<SimpleNodeManager>,
+        node_manager: Arc<InMemoryNodeManager<T>>,
         subscriptions: Arc<SubscriptionCache>,
-    ) {
+    ) where
+        T: InMemoryNodeManagerImpl,
+    {
         let cancel_token = self.cancel_token.clone();
         let node_states = self.node_states.clone();
         let update_seq = self.update_seq.clone();

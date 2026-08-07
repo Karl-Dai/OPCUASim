@@ -122,7 +122,8 @@ pub fn add_variable_node(
     let mut builder = VariableBuilder::new(&node_id, &node.display_name, &node.display_name)
         .data_type(dt_node_id)
         .value(initial_value)
-        .organized_by(parent_id);
+        .organized_by(parent_id)
+        .history_readable();
 
     if node.writable {
         builder = builder.writable();
