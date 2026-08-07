@@ -40,6 +40,9 @@ impl SubscriptionManager {
         {
             let mut items = self.monitored_items.write().await;
             for node in &nodes {
+                if matches!(node.access_mode, crate::node::AccessMode::Polling { .. }) {
+                    continue;
+                }
                 info!("Adding subscription for node: {}", node.node_id);
                 items.insert(node.node_id.clone(), node.clone());
             }
@@ -55,7 +58,7 @@ impl SubscriptionManager {
                     let nid: NodeId = n.node_id.parse().ok()?;
                     let interval_ms = match &n.access_mode {
                         crate::node::AccessMode::Subscription { interval_ms } => *interval_ms,
-                        crate::node::AccessMode::Polling { .. } => 1000.0,
+                        crate::node::AccessMode::Polling { .. } => return None, // polling handled by PollingManager
                     };
                     let filter_obj = n
                         .filter
