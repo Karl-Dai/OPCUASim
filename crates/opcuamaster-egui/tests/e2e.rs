@@ -70,6 +70,7 @@ async fn master_full_flow() {
         max_sessions: 10,
         max_subscriptions_per_session: 10,
         history_buffer_size: 10_000,
+        event_history_size: 1_000,
     };
     let folders = vec![ServerFolder {
         node_id: "Demo".into(),
@@ -407,6 +408,7 @@ async fn deadband_reduces_samples() {
         max_sessions: 10,
         max_subscriptions_per_session: 10,
         history_buffer_size: 10_000,
+        event_history_size: 1_000,
     };
     let folders = vec![ServerFolder {
         node_id: "Demo".into(),
@@ -543,6 +545,7 @@ async fn method_call_echo() {
         max_sessions: 10,
         max_subscriptions_per_session: 10,
         history_buffer_size: 10_000,
+        event_history_size: 1_000,
     };
     server.start(&config, &[], &[]).await.expect("server start");
     tokio::time::sleep(Duration::from_millis(500)).await;

@@ -1,12 +1,13 @@
-//! Historical data access wrapper around Session::history_read with
-//! ReadRawModifiedDetails. Loops continuation points up to max_values.
+//! Historical data access wrapper around Session::history_read.
+//! Loops continuation points up to max_values.
 
 use std::sync::Arc;
 
 use opcua_client::{HistoryReadAction, Session};
 use opcua_types::{
-    ContinuationPoint, DataValue, DateTime, HistoryData, HistoryReadResult, HistoryReadValueId,
-    NodeId, NumericRange, QualifiedName, ReadRawModifiedDetails, TimestampsToReturn,
+    ContinuationPoint, DataValue, DateTime, EventFilter, HistoryData, HistoryEvent,
+    HistoryReadResult, HistoryReadValueId, NodeId, NumericRange, QualifiedName,
+    ReadEventDetails, ReadRawModifiedDetails, TimestampsToReturn,
 };
 
 use crate::error::OpcUaSimError;
@@ -161,4 +162,109 @@ fn variant_to_f64(v: &opcua_types::Variant) -> Option<f64> {
         Variant::Double(x) => Some(*x),
         _ => None,
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct EventHistoryPoint {
+    pub time: String,
+    pub fields: Vec<String>,
+}
+
+pub async fn history_read_events(
+    session: &Arc<Session>,
+    node_id: &NodeId,
+    start: DateTime,
+    end: DateTime,
+    max_events: u32,
+    filter: EventFilter,
+) -> Result<Vec<EventHistoryPoint>, OpcUaSimError> {
+    let mut out: Vec<EventHistoryPoint> = Vec::new();
+    let mut continuation_point = ContinuationPoint::null();
+
+    loop {
+        let action = HistoryReadAction::ReadEventDetails(ReadEventDetails {
+            num_values_per_node: max_events.saturating_sub(out.len() as u32),
+            start_time: start,
+            end_time: end,
+            filter: filter.clone(),
+        });
+        let nodes_to_read = vec![HistoryReadValueId {
+            node_id: node_id.clone(),
+            index_range: NumericRange::None,
+            data_encoding: QualifiedName::null(),
+            continuation_point: continuation_point.clone(),
+        }];
+
+        let results: Vec<HistoryReadResult> = session
+            .history_read(action, TimestampsToReturn::Both, false, &nodes_to_read)
+            .await
+            .map_err(|e| OpcUaSimError::ConnectionFailed(format!("history_read_events failed: {e}")))?;
+
+        let result = results
+            .into_iter()
+            .next()
+            .ok_or_else(|| OpcUaSimError::ConnectionFailed("history_read_events empty result".into()))?;
+
+        if !result.status_code.is_good() {
+            return Err(OpcUaSimError::ConnectionFailed(format!(
+                "history_read_events status: {}",
+                result.status_code
+            )));
+        }
+
+        let history_event: Option<Box<HistoryEvent>> =
+            result.history_data.into_inner_as::<HistoryEvent>();
+        let field_lists = history_event.and_then(|he| he.events).unwrap_or_default();
+
+        let reached_max = {
+            let mut reached = false;
+            for field_list in field_lists {
+                let fields = field_list.event_fields.unwrap_or_default();
+                let time_str = fields
+                    .get(4)
+                    .map(|v| format!("{v}"))
+                    .unwrap_or_default();
+                let field_strs: Vec<String> = fields.iter().map(|v| format!("{v}")).collect();
+                out.push(EventHistoryPoint {
+                    time: time_str,
+                    fields: field_strs,
+                });
+                if out.len() as u32 >= max_events {
+                    reached = true;
+                    break;
+                }
+            }
+            reached
+        };
+
+        if result.continuation_point.is_null() {
+            break;
+        }
+
+        if reached_max {
+            let release_nodes = vec![HistoryReadValueId {
+                node_id: node_id.clone(),
+                index_range: NumericRange::None,
+                data_encoding: QualifiedName::null(),
+                continuation_point: result.continuation_point.clone(),
+            }];
+            let release_action = HistoryReadAction::ReadEventDetails(ReadEventDetails::default());
+            if let Err(e) = session
+                .history_read(
+                    release_action,
+                    TimestampsToReturn::Neither,
+                    true,
+                    &release_nodes,
+                )
+                .await
+            {
+                log::warn!("Failed to release history_events continuation point: {e}");
+            }
+            break;
+        }
+
+        continuation_point = result.continuation_point;
+    }
+
+    Ok(out)
 }

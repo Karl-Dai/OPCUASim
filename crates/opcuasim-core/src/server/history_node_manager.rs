@@ -16,11 +16,13 @@ use opcua_server::node_manager::{
 };
 use opcua_server::{ContinuationPoint, CreateMonitoredItem};
 use opcua_types::{
-    DataValue, DateTime, HistoryData, MonitoringMode, NodeId, NumericRange,
-    ReadAnnotationDataDetails, ReadAtTimeDetails, ReadEventDetails, ReadProcessedDetails,
-    ReadRawModifiedDetails, StatusCode, TimestampsToReturn, Variant,
+    DataValue, DateTime, FilterOperator, HistoryData, HistoryEvent, HistoryEventFieldList,
+    MonitoringMode, NodeId, NumericRange, ReadAnnotationDataDetails, ReadAtTimeDetails,
+    ReadEventDetails, ReadProcessedDetails, ReadRawModifiedDetails, StatusCode, TimestampsToReturn,
+    Variant,
 };
 
+use super::event_store::EventStore;
 use super::history_store::HistoryStore;
 
 /// In-memory node manager with history support.
@@ -29,16 +31,27 @@ use super::history_store::HistoryStore;
 /// except:
 /// * `history_read_raw_modified` — serves samples from the in-memory ring
 ///   buffer with paginated continuation points.
+/// * `history_read_events` — serves events from the in-memory ring buffer with
+///   field selection and continuation-point paging.
 /// * `write` — delegates first, then records every successful external write
 ///   into the [`HistoryStore`].
 pub struct HistoryNodeManagerImpl {
     inner: SimpleNodeManagerImpl,
     history: Arc<HistoryStore>,
+    event_store: Arc<EventStore>,
 }
 
 impl HistoryNodeManagerImpl {
-    pub fn new(inner: SimpleNodeManagerImpl, history: Arc<HistoryStore>) -> Self {
-        Self { inner, history }
+    pub fn new(
+        inner: SimpleNodeManagerImpl,
+        history: Arc<HistoryStore>,
+        event_store: Arc<EventStore>,
+    ) -> Self {
+        Self {
+            inner,
+            history,
+            event_store,
+        }
     }
 
     /// Forward a method callback registration to the inner manager.
@@ -304,14 +317,131 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
 
     async fn history_read_events(
         &self,
-        context: &RequestContext,
+        _context: &RequestContext,
         details: &ReadEventDetails,
         nodes: &mut [&mut &mut HistoryNode],
-        timestamps_to_return: TimestampsToReturn,
+        _timestamps_to_return: TimestampsToReturn,
     ) -> Result<(), StatusCode> {
-        self.inner
-            .history_read_events(context, details, nodes, timestamps_to_return)
-            .await
+        let field_names: &[&str] = &[
+            "EventId",
+            "EventType",
+            "SourceNode",
+            "SourceName",
+            "Time",
+            "ReceiveTime",
+            "Message",
+            "Severity",
+        ];
+        let select_indices: Option<Vec<usize>> = details.filter.select_clauses.as_ref().map(
+            |clauses| {
+                clauses
+                    .iter()
+                    .map(|clause| {
+                        clause
+                            .browse_path
+                            .as_ref()
+                            .and_then(|path| {
+                                path.last()
+                                    .map(|qn| qn.name.to_string())
+                                    .and_then(|name| {
+                                        field_names.iter().position(|n| *n == name)
+                                    })
+                            })
+                            .unwrap_or(usize::MAX)
+                    })
+                    .collect()
+            },
+        );
+
+        let filter_eq: Option<(usize, Variant)> = details
+            .filter
+            .where_clause
+            .elements
+            .as_ref()
+            .and_then(|elements| {
+                if elements.len() != 1 {
+                    return None;
+                }
+                let el = &elements[0];
+                if el.filter_operator != FilterOperator::Equals {
+                    return None;
+                }
+                let operands = el.filter_operands.as_ref()?;
+                if operands.len() != 2 {
+                    return None;
+                }
+                let sao = operands[0]
+                    .inner_as::<opcua_types::SimpleAttributeOperand>()?;
+                let lit = operands[1].inner_as::<opcua_types::LiteralOperand>()?;
+                let field_idx = sao
+                    .browse_path
+                    .as_ref()
+                    .and_then(|path| path.last().map(|qn| qn.name.to_string()))
+                    .and_then(|name| field_names.iter().position(|n| *n == name))?;
+                Some((field_idx, lit.value.clone()))
+            });
+
+        for node in nodes.iter_mut() {
+            let node_id = node.node_id().clone();
+            let skip = match node.continuation_point() {
+                Some(cp) => cp
+                    .get::<usize>()
+                    .copied()
+                    .ok_or(StatusCode::BadContinuationPointInvalid)?,
+                None => 0,
+            };
+            let (mut events, next_skip) = self
+                .event_store
+                .query(
+                    &node_id,
+                    details.start_time,
+                    details.end_time,
+                    details.num_values_per_node,
+                    skip,
+                )
+                .await;
+
+            if let Some((idx, ref expected)) = filter_eq {
+                events.retain(|(_, fields)| {
+                    fields.get(idx).is_some_and(|v| variants_match(v, expected))
+                });
+            }
+
+            let field_lists: Vec<HistoryEventFieldList> = events
+                .into_iter()
+                .map(|(_time, fields)| {
+                    let event_fields = match &select_indices {
+                        Some(indices) => indices
+                            .iter()
+                            .map(|&i| {
+                                if i < fields.len() {
+                                    fields[i].clone()
+                                } else {
+                                    Variant::Empty
+                                }
+                            })
+                            .collect(),
+                        None => fields,
+                    };
+                    HistoryEventFieldList {
+                        event_fields: Some(event_fields),
+                    }
+                })
+                .collect();
+
+            node.set_result(HistoryEvent {
+                events: if field_lists.is_empty() {
+                    None
+                } else {
+                    Some(field_lists)
+                },
+            });
+            node.set_next_continuation_point(
+                next_skip.map(|s| ContinuationPoint::new(Box::new(s))),
+            );
+            node.set_status(StatusCode::Good);
+        }
+        Ok(())
     }
 
     async fn history_read_annotations(
@@ -395,5 +525,25 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
         self.inner
             .delete_references(context, address_space, references_to_delete)
             .await
+    }
+}
+
+fn variants_match(a: &Variant, b: &Variant) -> bool {
+    match (a, b) {
+        (Variant::Boolean(x), Variant::Boolean(y)) => x == y,
+        (Variant::Byte(x), Variant::Byte(y)) => x == y,
+        (Variant::SByte(x), Variant::SByte(y)) => x == y,
+        (Variant::Int16(x), Variant::Int16(y)) => x == y,
+        (Variant::UInt16(x), Variant::UInt16(y)) => x == y,
+        (Variant::Int32(x), Variant::Int32(y)) => x == y,
+        (Variant::UInt32(x), Variant::UInt32(y)) => x == y,
+        (Variant::Int64(x), Variant::Int64(y)) => x == y,
+        (Variant::UInt64(x), Variant::UInt64(y)) => x == y,
+        (Variant::Float(x), Variant::Float(y)) => x == y,
+        (Variant::Double(x), Variant::Double(y)) => x == y,
+        (Variant::String(x), Variant::String(y)) => x == y,
+        (Variant::ByteString(x), Variant::ByteString(y)) => x == y,
+        (Variant::NodeId(x), Variant::NodeId(y)) => x == y,
+        _ => format!("{a}") == format!("{b}"),
     }
 }

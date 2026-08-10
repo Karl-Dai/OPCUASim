@@ -49,6 +49,7 @@ struct BuildResult {
     handle: ServerHandle,
     node_manager: Arc<InMemoryNodeManager<HistoryNodeManagerImpl>>,
     history: Arc<HistoryStore>,
+    event_store: Arc<EventStore>,
     namespace_index: u16,
     subscriptions: Arc<SubscriptionCache>,
 }
@@ -62,15 +63,17 @@ fn build_server(
     // Build user tokens
     let mut user_token_ids: Vec<String> = Vec::new();
     let history = Arc::new(HistoryStore::new(config.history_buffer_size));
+    let event_store = Arc::new(EventStore::new(config.event_history_size));
     let ns_meta = NamespaceMetadata {
         namespace_uri: NAMESPACE_URI.to_string(),
         ..Default::default()
     };
     let history_for_impl = history.clone();
+    let event_store_for_impl = event_store.clone();
     let nm_builder = move |context: ServerContext, address_space: &mut AddressSpace| {
         let inner = SimpleNodeManagerBuilder::new(ns_meta.clone(), "SimNodeManager")
             .build(context, address_space);
-        HistoryNodeManagerImpl::new(inner, history_for_impl.clone())
+        HistoryNodeManagerImpl::new(inner, history_for_impl.clone(), event_store_for_impl.clone())
     };
 
     let mut builder = ServerBuilder::new()
@@ -191,6 +194,7 @@ fn build_server(
         handle,
         node_manager: sim_nm,
         history,
+        event_store,
         namespace_index: ns_index,
         subscriptions,
     })
@@ -243,6 +247,7 @@ impl OpcUaServer {
             handle,
             node_manager: sim_nm,
             history,
+            event_store,
             namespace_index: ns_index,
             subscriptions,
         } = build_result;
@@ -250,9 +255,6 @@ impl OpcUaServer {
         *self.namespace_index.write().await = ns_index;
         *self.handle.write().await = Some(handle);
         *self.node_manager.write().await = Some(sim_nm.clone());
-
-        // EventStore capacity is hardcoded until Task 5 adds config.event_history_size
-        let event_store = Arc::new(EventStore::new(10_000));
         *self.event_store.write().await = Some(event_store.clone());
 
         {

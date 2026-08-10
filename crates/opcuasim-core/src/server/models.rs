@@ -180,6 +180,9 @@ pub struct ServerConfig {
     /// Per-node history ring buffer capacity. 0 disables history recording.
     #[serde(default = "default_history_buffer_size")]
     pub history_buffer_size: usize,
+    /// Event history ring buffer capacity (per-source). 0 disables event recording.
+    #[serde(default = "default_event_history_size")]
+    pub event_history_size: usize,
 }
 
 impl Default for ServerConfig {
@@ -195,12 +198,17 @@ impl Default for ServerConfig {
             max_sessions: 100,
             max_subscriptions_per_session: 50,
             history_buffer_size: default_history_buffer_size(),
+            event_history_size: default_event_history_size(),
         }
     }
 }
 
 fn default_history_buffer_size() -> usize {
     10_000
+}
+
+fn default_event_history_size() -> usize {
+    1_000
 }
 
 /// Server lifecycle state.

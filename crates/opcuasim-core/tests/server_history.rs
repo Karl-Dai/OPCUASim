@@ -25,6 +25,7 @@ fn server_config() -> ServerConfig {
         max_sessions: 10,
         max_subscriptions_per_session: 10,
         history_buffer_size: 10_000,
+        event_history_size: 1_000,
     }
 }
 
