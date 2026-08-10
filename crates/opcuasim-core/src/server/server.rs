@@ -251,7 +251,8 @@ impl OpcUaServer {
 
         {
             let mut addr = sim_nm.address_space().write();
-            let _ = super::events::build_events_object(&mut *addr, ns_index);
+        super::events::build_events_object(&mut *addr, ns_index)
+            .expect("failed to create DemoEvents object");
         }
 
         let events_source = opcua_types::NodeId::new(ns_index, DEMO_EVENTS_ID);

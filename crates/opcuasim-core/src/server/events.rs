@@ -44,6 +44,9 @@ pub fn build_events_object(
 
 /// Construct a `BaseEventType`, live-notify subscribers and
 /// asynchronously record the event fields in `event_store` (if provided).
+///
+/// Note: must be called from within a tokio runtime context (method
+/// callbacks run on the server's tokio worker threads).
 pub fn notify_event(
     subscriptions: &SubscriptionCache,
     event_store: &Option<Arc<EventStore>>,
@@ -65,8 +68,8 @@ pub fn notify_event(
     .set_source_name(UAString::from(DEMO_EVENTS_ID))
     .set_severity(severity);
 
-    // Live-notify listeners subscribed to events on this source.
-    subscriptions.notify_events([(&event as &dyn opcua_nodes::Event, source)].into_iter());
+    // Live-notify listeners subscribed to events on this source (single-event push).
+    subscriptions.notify_events(std::iter::once((&event as &dyn opcua_nodes::Event, source)));
 
     // Asynchronously record fields to the EventStore ring buffer.
     if let Some(store) = event_store {
