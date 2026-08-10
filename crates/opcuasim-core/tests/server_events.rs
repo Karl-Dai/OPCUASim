@@ -186,21 +186,19 @@ async fn server_events_e2e() {
             let found = history
                 .iter()
                 .any(|h| h.fields.iter().any(|f| f.contains("test-alarm")));
-            if found {
-                println!(
-                    "[OK] event history contains {} entries (test-alarm found)",
-                    history.len()
-                );
-            } else {
-                println!(
-                    "[WARN] history_read_events returned {} events; 'test-alarm' not found (server may not persist raised events to event history)",
-                    history.len()
-                );
-            }
+            assert!(
+                found,
+                "history_read_events returned {} events but 'test-alarm' not found: {:?}",
+                history.len(),
+                history.iter().map(|h| &h.fields).collect::<Vec<_>>()
+            );
+            println!(
+                "[OK] event history contains {} entries (test-alarm found)",
+                history.len()
+            );
         }
         Err(e) => {
-            // Server may not support ReadEventDetails on DemoEvents — best-effort.
-            println!("[WARN] history_read_events unsupported: {}", e);
+            panic!("history_read_events failed: {e}");
         }
     }
 
