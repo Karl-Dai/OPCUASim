@@ -326,6 +326,7 @@ impl OpcUaServer {
         let sim_engine = Arc::new(SimulationEngine::new());
         sim_engine.register_nodes(nodes, ns_index).await;
         sim_engine.set_history_store(history.clone()).await;
+        sim_engine.set_custom_types(custom_types.clone()).await;
         {
             let subs_for_alarm = subscriptions.clone();
             let store_for_alarm: Option<Arc<EventStore>> = Some(event_store.clone());

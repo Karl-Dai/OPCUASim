@@ -10,7 +10,7 @@ use opcua_server::node_manager::memory::{InMemoryNodeManager, InMemoryNodeManage
 use opcua_server::SubscriptionCache;
 use opcua_types::{DataValue, DateTime, NodeId, NumericRange};
 
-use super::address_space::f64_to_variant;
+use super::address_space::{f64_to_variant, variant_to_display_string};
 use super::generator::generate_value;
 use super::history_store::HistoryStore;
 use super::models::{DataType, ServerNode, SimulationMode};
@@ -34,14 +34,11 @@ pub struct SimulationEngine {
     cancel_token: CancellationToken,
     node_states: Arc<RwLock<HashMap<String, NodeSimState>>>,
     update_seq: Arc<RwLock<u64>>,
-    /// Map of node_id -> current_value for incremental polling from frontend.
     current_values: Arc<RwLock<HashMap<String, (String, u64)>>>,
     history_store: Arc<RwLock<Option<Arc<HistoryStore>>>>,
-    /// Per-node alarm state: node_id_string → alarm_active (transitions fire events).
     alarm_states: Arc<RwLock<HashMap<String, bool>>>,
-    /// Sync callback invoked inside the simulation task to emit threshold events.
-    /// `Fn(message: &str, severity: u16)`.
     event_notifier: Arc<RwLock<Option<Arc<dyn Fn(&str, u16) + Send + Sync>>>>,
+    custom_types: Arc<RwLock<HashMap<String, NodeId>>>,
 }
 
 impl SimulationEngine {
@@ -54,6 +51,7 @@ impl SimulationEngine {
             history_store: Arc::new(RwLock::new(None)),
             alarm_states: Arc::new(RwLock::new(HashMap::new())),
             event_notifier: Arc::new(RwLock::new(None)),
+            custom_types: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -62,10 +60,12 @@ impl SimulationEngine {
         *self.history_store.write().await = Some(store);
     }
 
-    /// Attach an event notifier; simulation will emit threshold alarm /
-    /// recovery events through this callback on state transitions.
     pub async fn set_event_notifier(&self, notifier: Arc<dyn Fn(&str, u16) + Send + Sync>) {
         *self.event_notifier.write().await = Some(notifier);
+    }
+
+    pub async fn set_custom_types(&self, custom: HashMap<String, NodeId>) {
+        *self.custom_types.write().await = custom;
     }
 
     /// Register nodes for simulation. Must be called before start().
@@ -108,6 +108,7 @@ impl SimulationEngine {
         let history_store = self.history_store.clone();
         let alarm_states = self.alarm_states.clone();
         let event_notifier = self.event_notifier.clone();
+        let custom_types = self.custom_types.clone();
 
         tokio::spawn(async move {
             // Group nodes by interval
@@ -137,6 +138,7 @@ impl SimulationEngine {
                 let hs = history_store.clone();
                 let as_ = alarm_states.clone();
                 let en = event_notifier.clone();
+                let ct = custom_types.clone();
 
                 let handle = tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
@@ -148,8 +150,8 @@ impl SimulationEngine {
                             _ = interval.tick() => {
                                 let elapsed = start_time.elapsed().as_secs_f64();
                                 let now = DateTime::now();
+                                let custom = ct.read().await.clone();
 
-                                // Generate values for all nodes in this group
                                 let mut updates: Vec<(&NodeId, Option<&NumericRange>, DataValue)> = Vec::new();
                                 let mut value_strings: Vec<(String, String)> = Vec::new();
                                 let mut alarm_events: Vec<(String, String, u16)> = Vec::new();
@@ -160,8 +162,8 @@ impl SimulationEngine {
                                         elapsed,
                                         node_state.iteration,
                                     ) {
-                                        let variant = f64_to_variant(raw_value, &node_state.data_type);
-                                        let value_str = format!("{}", variant);
+                                        let variant = f64_to_variant(raw_value, &node_state.data_type, &custom);
+                                        let value_str = variant_to_display_string(&variant);
                                         value_strings.push((node_state.node_id_str.clone(), value_str));
 
                                         let mut dv = DataValue::new_now(variant);
