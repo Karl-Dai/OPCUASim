@@ -2784,10 +2784,12 @@ name = "opcuasim-core"
 version = "0.4.0"
 dependencies = [
  "async-opcua-client",
+ "async-opcua-core",
  "async-opcua-crypto",
  "async-opcua-nodes",
  "async-opcua-server",
  "async-opcua-types",
+ "async-trait",
  "chrono",
  "env_logger",
  "log",

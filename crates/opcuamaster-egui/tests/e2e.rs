@@ -9,7 +9,6 @@ use opcuasim_core::server::models::{
     DataType, ServerConfig, ServerFolder, ServerNode, SimulationMode,
 };
 use opcuasim_core::server::server::OpcUaServer;
-use opcuasim_core::server::test_methods::register_demo_echo_method;
 
 use opcuamaster_egui::events::{
     AuthKindReq, BackendEvent, CreateConnectionReq, DataChangeFilterReq, DataChangeTriggerKindReq,
@@ -70,6 +69,7 @@ async fn master_full_flow() {
         anonymous_enabled: true,
         max_sessions: 10,
         max_subscriptions_per_session: 10,
+        history_buffer_size: 10_000,
     };
     let folders = vec![ServerFolder {
         node_id: "Demo".into(),
@@ -406,6 +406,7 @@ async fn deadband_reduces_samples() {
         anonymous_enabled: true,
         max_sessions: 10,
         max_subscriptions_per_session: 10,
+        history_buffer_size: 10_000,
     };
     let folders = vec![ServerFolder {
         node_id: "Demo".into(),
@@ -541,14 +542,13 @@ async fn method_call_echo() {
         anonymous_enabled: true,
         max_sessions: 10,
         max_subscriptions_per_session: 10,
+        history_buffer_size: 10_000,
     };
     server.start(&config, &[], &[]).await.expect("server start");
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let method_id = register_demo_echo_method(&server)
-        .await
-        .expect("register echo");
-    let method_id_str = format!("{method_id}");
+    // Demo methods are auto-registered at server startup (methods.rs).
+    let method_id_str = "ns=2;s=Demo.Echo".to_string();
 
     let ctx = egui::Context::default();
     let (backend, mut rx) = BackendHandle::new(

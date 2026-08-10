@@ -39,6 +39,7 @@ async fn eu_range_property_and_percent_deadband() {
                 anonymous_enabled: true,
                 max_sessions: 10,
                 max_subscriptions_per_session: 10,
+                history_buffer_size: 10_000,
             },
             &[],
             &[ServerNode {

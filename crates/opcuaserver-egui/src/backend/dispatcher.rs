@@ -193,6 +193,10 @@ async fn handle_cmd(
             }
             let _ = event_tx.send(build_address_space_event(state));
         }
+        UiCommand::UpdateConfig(config) => {
+            *state.config.write().unwrap() = config.clone();
+            let _ = event_tx.send(BackendEvent::Config(config));
+        }
         UiCommand::SaveProject(path) => {
             let project = ServerProjectFile {
                 project_type: "OpcUaServer".into(),

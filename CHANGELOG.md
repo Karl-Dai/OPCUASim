@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Editable EU Range (low/high) for server variables in the property editor
+- Server: in-memory history buffer with HistoryRead support (simulated and externally written values, paged continuation points)
+- Server: preset demo methods (Echo / Add / RandomValue / SetNodeValue) callable from any client
+- Server UI: configurable per-node history buffer capacity (0 = disabled)
 
 ## [0.4.0] - 2026-05-02
 

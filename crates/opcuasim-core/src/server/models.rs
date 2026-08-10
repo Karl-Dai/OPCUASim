@@ -177,6 +177,9 @@ pub struct ServerConfig {
     pub anonymous_enabled: bool,
     pub max_sessions: u32,
     pub max_subscriptions_per_session: u32,
+    /// Per-node history ring buffer capacity. 0 disables history recording.
+    #[serde(default = "default_history_buffer_size")]
+    pub history_buffer_size: usize,
 }
 
 impl Default for ServerConfig {
@@ -191,8 +194,13 @@ impl Default for ServerConfig {
             anonymous_enabled: true,
             max_sessions: 100,
             max_subscriptions_per_session: 50,
+            history_buffer_size: default_history_buffer_size(),
         }
     }
+}
+
+fn default_history_buffer_size() -> usize {
+    10_000
 }
 
 /// Server lifecycle state.

@@ -6,12 +6,13 @@ use log::info;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use opcua_server::node_manager::memory::SimpleNodeManager;
+use opcua_server::node_manager::memory::{InMemoryNodeManager, InMemoryNodeManagerImpl};
 use opcua_server::SubscriptionCache;
 use opcua_types::{DataValue, DateTime, NodeId, NumericRange};
 
 use super::address_space::f64_to_variant;
 use super::generator::generate_value;
+use super::history_store::HistoryStore;
 use super::models::{DataType, ServerNode, SimulationMode};
 
 /// State for a single simulated node.
@@ -32,6 +33,7 @@ pub struct SimulationEngine {
     update_seq: Arc<RwLock<u64>>,
     /// Map of node_id -> current_value for incremental polling from frontend.
     current_values: Arc<RwLock<HashMap<String, (String, u64)>>>,
+    history_store: Arc<RwLock<Option<Arc<HistoryStore>>>>,
 }
 
 impl SimulationEngine {
@@ -41,7 +43,13 @@ impl SimulationEngine {
             node_states: Arc::new(RwLock::new(HashMap::new())),
             update_seq: Arc::new(RwLock::new(0)),
             current_values: Arc::new(RwLock::new(HashMap::new())),
+            history_store: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Attach the history store; simulation updates will be recorded there.
+    pub async fn set_history_store(&self, store: Arc<HistoryStore>) {
+        *self.history_store.write().await = Some(store);
     }
 
     /// Register nodes for simulation. Must be called before start().
@@ -67,15 +75,18 @@ impl SimulationEngine {
     }
 
     /// Start the simulation engine. Spawns one tokio task per interval group.
-    pub fn start(
+    pub fn start<T>(
         &self,
-        node_manager: Arc<SimpleNodeManager>,
+        node_manager: Arc<InMemoryNodeManager<T>>,
         subscriptions: Arc<SubscriptionCache>,
-    ) {
+    ) where
+        T: InMemoryNodeManagerImpl,
+    {
         let cancel_token = self.cancel_token.clone();
         let node_states = self.node_states.clone();
         let update_seq = self.update_seq.clone();
         let current_values = self.current_values.clone();
+        let history_store = self.history_store.clone();
 
         tokio::spawn(async move {
             // Group nodes by interval
@@ -102,6 +113,7 @@ impl SimulationEngine {
                 let subs = subscriptions.clone();
                 let seq = update_seq.clone();
                 let vals = current_values.clone();
+                let hs = history_store.clone();
 
                 let handle = tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
@@ -131,6 +143,13 @@ impl SimulationEngine {
                                         let mut dv = DataValue::new_now(variant);
                                         dv.source_timestamp = Some(now);
                                         dv.server_timestamp = Some(now);
+
+                                        if let Some(store) = {
+                                            let guard = hs.read().await;
+                                            guard.as_ref().cloned()
+                                        } {
+                                            store.record(&node_state.opcua_node_id, dv.clone()).await;
+                                        }
 
                                         updates.push((
                                             &node_state.opcua_node_id,

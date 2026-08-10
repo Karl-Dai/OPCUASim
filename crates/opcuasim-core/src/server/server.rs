@@ -4,8 +4,13 @@ use log::info;
 use tokio::sync::RwLock;
 
 use opcua_crypto::SecurityPolicy;
+use opcua_server::address_space::AddressSpace;
 use opcua_server::diagnostics::NamespaceMetadata;
-use opcua_server::node_manager::memory::{simple_node_manager, SimpleNodeManager};
+use opcua_server::node_manager::memory::{
+    InMemoryNodeManager, InMemoryNodeManagerBuilder, InMemoryNodeManagerImplBuilder,
+    SimpleNodeManagerBuilder,
+};
+use opcua_server::node_manager::ServerContext;
 use opcua_server::{
     Server, ServerBuilder, ServerHandle, ServerUserToken, SubscriptionCache,
     ANONYMOUS_USER_TOKEN_ID,
@@ -13,6 +18,8 @@ use opcua_server::{
 use opcua_types::MessageSecurityMode;
 
 use super::address_space::populate_address_space;
+use super::history_node_manager::HistoryNodeManagerImpl;
+use super::history_store::HistoryStore;
 use super::models::{ServerConfig, ServerFolder, ServerNode, ServerState};
 use super::simulation::SimulationEngine;
 use crate::error::OpcUaSimError;
@@ -24,7 +31,7 @@ const NAMESPACE_URI: &str = "urn:opcuasim:server:nodes";
 pub struct OpcUaServer {
     state: Arc<RwLock<ServerState>>,
     handle: Arc<RwLock<Option<ServerHandle>>>,
-    node_manager: Arc<RwLock<Option<Arc<SimpleNodeManager>>>>,
+    node_manager: Arc<RwLock<Option<Arc<InMemoryNodeManager<HistoryNodeManagerImpl>>>>>,
     simulation_engine: Arc<RwLock<Option<Arc<SimulationEngine>>>>,
     namespace_index: Arc<RwLock<u16>>,
 }
@@ -33,7 +40,8 @@ pub struct OpcUaServer {
 struct BuildResult {
     server: Server,
     handle: ServerHandle,
-    node_manager: Arc<SimpleNodeManager>,
+    node_manager: Arc<InMemoryNodeManager<HistoryNodeManagerImpl>>,
+    history: Arc<HistoryStore>,
     namespace_index: u16,
     subscriptions: Arc<SubscriptionCache>,
 }
@@ -46,6 +54,18 @@ fn build_server(
 ) -> Result<BuildResult, OpcUaSimError> {
     // Build user tokens
     let mut user_token_ids: Vec<String> = Vec::new();
+    let history = Arc::new(HistoryStore::new(config.history_buffer_size));
+    let ns_meta = NamespaceMetadata {
+        namespace_uri: NAMESPACE_URI.to_string(),
+        ..Default::default()
+    };
+    let history_for_impl = history.clone();
+    let nm_builder = move |context: ServerContext, address_space: &mut AddressSpace| {
+        let inner = SimpleNodeManagerBuilder::new(ns_meta.clone(), "SimNodeManager")
+            .build(context, address_space);
+        HistoryNodeManagerImpl::new(inner, history_for_impl.clone())
+    };
+
     let mut builder = ServerBuilder::new()
         .application_name(&config.name)
         .application_uri(APPLICATION_URI)
@@ -55,13 +75,7 @@ fn build_server(
         .host("0.0.0.0")
         .port(config.port)
         .trust_client_certs(true)
-        .with_node_manager(simple_node_manager(
-            NamespaceMetadata {
-                namespace_uri: NAMESPACE_URI.to_string(),
-                ..Default::default()
-            },
-            "SimNodeManager",
-        ));
+        .with_node_manager(InMemoryNodeManagerBuilder::new(nm_builder));
 
     if config.anonymous_enabled {
         user_token_ids.push(ANONYMOUS_USER_TOKEN_ID.to_string());
@@ -132,8 +146,12 @@ fn build_server(
 
     let node_managers = handle.node_managers();
     let sim_nm = node_managers
-        .get_of_type::<SimpleNodeManager>()
-        .ok_or_else(|| OpcUaSimError::ServerError("SimpleNodeManager not found".into()))?;
+        .get_of_type::<InMemoryNodeManager<HistoryNodeManagerImpl>>()
+        .ok_or_else(|| {
+            OpcUaSimError::ServerError(
+                "InMemoryNodeManager<HistoryNodeManagerImpl> not found".into(),
+            )
+        })?;
 
     let ns_index = {
         let ns = sim_nm.namespaces();
@@ -165,6 +183,7 @@ fn build_server(
         server,
         handle,
         node_manager: sim_nm,
+        history,
         namespace_index: ns_index,
         subscriptions,
     })
@@ -213,6 +232,7 @@ impl OpcUaServer {
             server,
             handle,
             node_manager: sim_nm,
+            history,
             namespace_index: ns_index,
             subscriptions,
         } = build_result;
@@ -224,8 +244,14 @@ impl OpcUaServer {
         // Start simulation engine
         let sim_engine = Arc::new(SimulationEngine::new());
         sim_engine.register_nodes(nodes, ns_index).await;
-        sim_engine.start(sim_nm, subscriptions);
+        sim_engine.set_history_store(history.clone()).await;
+        sim_engine.start(sim_nm, subscriptions.clone());
         *self.simulation_engine.write().await = Some(sim_engine.clone());
+
+        // Register preset demo methods
+        if let Err(e) = super::methods::register_demo_methods(self, subscriptions).await {
+            log::warn!("Failed to register preset demo methods: {e}");
+        }
 
         // Run server in background task
         let state = self.state.clone();
@@ -277,7 +303,7 @@ impl OpcUaServer {
     }
 
     /// Get a reference to the node manager (if server is running).
-    pub async fn node_manager(&self) -> Option<Arc<SimpleNodeManager>> {
+    pub async fn node_manager(&self) -> Option<Arc<InMemoryNodeManager<HistoryNodeManagerImpl>>> {
         self.node_manager.read().await.clone()
     }
 
