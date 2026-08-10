@@ -116,6 +116,7 @@ async fn handle_cmd(
                     ns,
                     std::slice::from_ref(&folder),
                     &[],
+                    &state.server.custom_types().await,
                 );
             }
             state.folders.write().unwrap().push(folder);
@@ -137,7 +138,12 @@ async fn handle_cmd(
             if let Some(nm) = state.server.node_manager().await {
                 let ns = state.server.namespace_index().await;
                 let mut addr = nm.address_space().write();
-                opcuasim_core::server::address_space::add_variable_node(&mut addr, ns, &node);
+                opcuasim_core::server::address_space::add_variable_node(
+                    &mut addr,
+                    ns,
+                    &node,
+                    &state.server.custom_types().await,
+                );
             }
             state.nodes.write().unwrap().push(node);
             let _ = event_tx.send(build_address_space_event(state));

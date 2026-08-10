@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use log::info;
@@ -17,9 +18,11 @@ use opcua_server::{
     Server, ServerBuilder, ServerHandle, ServerUserToken, SubscriptionCache,
     ANONYMOUS_USER_TOKEN_ID,
 };
-use opcua_types::MessageSecurityMode;
+use opcua_types::{MessageSecurityMode, NodeId};
 
-use super::address_space::populate_address_space;
+use super::address_space::{
+    populate_address_space, register_custom_types_in_address_space,
+};
 use super::event_store::EventStore;
 use super::events::DEMO_EVENTS_ID;
 use super::history_node_manager::HistoryNodeManagerImpl;
@@ -39,6 +42,10 @@ pub struct OpcUaServer {
     simulation_engine: Arc<RwLock<Option<Arc<SimulationEngine>>>>,
     namespace_index: Arc<RwLock<u16>>,
     event_store: Arc<RwLock<Option<Arc<EventStore>>>>,
+    /// Registered custom type IDs (`type_name -> NodeId`). Populated by
+    /// [`super::address_space::register_custom_types_in_address_space`] at
+    /// server start time.
+    custom_types: Arc<RwLock<HashMap<String, NodeId>>>,
     heartbeat_task: Arc<RwLock<Option<JoinHandle<()>>>>,
     connection_monitor_task: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
@@ -52,6 +59,7 @@ struct BuildResult {
     event_store: Arc<EventStore>,
     namespace_index: u16,
     subscriptions: Arc<SubscriptionCache>,
+    custom_types: HashMap<String, NodeId>,
 }
 
 /// Build the OPC UA server synchronously (ServerBuilder is not Send).
@@ -70,9 +78,43 @@ fn build_server(
     };
     let history_for_impl = history.clone();
     let event_store_for_impl = event_store.clone();
+    let custom_types_share: Arc<Mutex<HashMap<String, NodeId>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let custom_for_closure = custom_types_share.clone();
+    let folders_captured: Arc<Mutex<Vec<ServerFolder>>> =
+        Arc::new(Mutex::new(folders.to_vec()));
+    let nodes_captured: Arc<Mutex<Vec<ServerNode>>> =
+        Arc::new(Mutex::new(nodes.to_vec()));
+    let ns_uri_for_closure = NAMESPACE_URI.to_string();
     let nm_builder = move |context: ServerContext, address_space: &mut AddressSpace| {
+        let type_tree_clone = context.type_tree.clone();
         let inner = SimpleNodeManagerBuilder::new(ns_meta.clone(), "SimNodeManager")
             .build(context, address_space);
+
+        let ns_index = {
+            let tree = type_tree_clone.read();
+            tree.namespaces()
+                .get_index(&ns_uri_for_closure)
+                .unwrap_or(2)
+        };
+
+        let folders_ref = folders_captured.lock().unwrap();
+        let nodes_ref = nodes_captured.lock().unwrap();
+        let mut custom_ref = custom_for_closure.lock().unwrap();
+        let registered = register_custom_types_in_address_space(
+            address_space,
+            ns_index,
+            &nodes_ref,
+        );
+        *custom_ref = registered;
+
+        populate_address_space(
+            address_space,
+            ns_index,
+            &folders_ref,
+            &nodes_ref,
+            &custom_ref,
+        );
         HistoryNodeManagerImpl::new(inner, history_for_impl.clone(), event_store_for_impl.clone())
     };
 
@@ -176,18 +218,12 @@ fn build_server(
             })?
     };
 
-    // Populate address space (sync)
-    {
-        let mut address_space = sim_nm.address_space().write();
-        populate_address_space(&mut address_space, ns_index, folders, nodes);
-    }
-    info!(
-        "Address space populated: {} folders, {} nodes",
-        folders.len(),
-        nodes.len()
-    );
-
     let subscriptions = server.subscriptions();
+
+    let custom_types: HashMap<String, NodeId> = {
+        let guard = custom_types_share.lock().unwrap();
+        guard.clone()
+    };
 
     Ok(BuildResult {
         server,
@@ -197,6 +233,7 @@ fn build_server(
         event_store,
         namespace_index: ns_index,
         subscriptions,
+        custom_types,
     })
 }
 
@@ -209,6 +246,7 @@ impl OpcUaServer {
             simulation_engine: Arc::new(RwLock::new(None)),
             namespace_index: Arc::new(RwLock::new(2)),
             event_store: Arc::new(RwLock::new(None)),
+            custom_types: Arc::new(RwLock::new(HashMap::new())),
             heartbeat_task: Arc::new(RwLock::new(None)),
             connection_monitor_task: Arc::new(RwLock::new(None)),
         }
@@ -250,12 +288,25 @@ impl OpcUaServer {
             event_store,
             namespace_index: ns_index,
             subscriptions,
+            custom_types,
         } = build_result;
 
         *self.namespace_index.write().await = ns_index;
-        *self.handle.write().await = Some(handle);
+        *self.handle.write().await = Some(handle.clone());
         *self.node_manager.write().await = Some(sim_nm.clone());
         *self.event_store.write().await = Some(event_store.clone());
+        *self.custom_types.write().await = custom_types.clone();
+
+        // Register custom types in the server's shared type tree (async-safe).
+        // The address-space DataType nodes already exist (populated in the
+        // builder closure); here we add the corresponding type-tree entries so
+        // clients can resolve the types when browsing.
+        super::address_space::register_custom_types_in_type_tree(
+            &mut *handle.type_tree().write(),
+            ns_index,
+            &custom_types,
+            nodes,
+        );
 
         {
             let mut addr = sim_nm.address_space().write();
@@ -398,6 +449,13 @@ impl OpcUaServer {
 
     pub async fn event_store(&self) -> Option<Arc<EventStore>> {
         self.event_store.read().await.clone()
+    }
+
+    /// Retrieve the map of registered custom type names to their NodeIds.
+    /// Empty if the server has not yet started or no custom types were
+    /// encountered in the configuration.
+    pub async fn custom_types(&self) -> HashMap<String, NodeId> {
+        self.custom_types.read().await.clone()
     }
 }
 

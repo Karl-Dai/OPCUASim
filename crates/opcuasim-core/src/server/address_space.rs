@@ -1,15 +1,99 @@
-use opcua_nodes::ReferenceDirection;
-use opcua_server::address_space::{AddressSpace, VariableBuilder};
+use std::collections::{HashMap, HashSet};
+
+use log::{info, warn};
+use opcua_nodes::{
+    DataTypeBuilder, DefaultTypeTree, ObjectBuilder, ReferenceDirection, VariableBuilder,
+};
+use opcua_server::address_space::AddressSpace;
 use opcua_types::{
-    DataTypeId, LocalizedText, NodeId, QualifiedName, ReferenceTypeId, UAString, Variant,
+    Array, DataTypeDefinition, DataTypeId, EnumDefinition, EnumField, ExtensionObject,
+    LocalizedText, NodeClass, NodeId, ObjectTypeId, QualifiedName, ReferenceTypeId,
+    StructureDefinition, StructureField, StructureType, UAString, Variant, VariantScalarTypeId,
 };
 
-use super::models::{DataType, ServerFolder, ServerNode, SimulationMode};
+use super::models::{DataType, ServerFolder, ServerNode, SimulationMode, StructField};
 use crate::error::OpcUaSimError;
 
-/// Convert our DataType enum to the OPC UA DataTypeId NodeId.
-fn data_type_to_node_id(dt: &DataType) -> NodeId {
-    NodeId::new(0, dt.type_id())
+fn data_type_to_node_id(
+    dt: &DataType,
+    custom: &HashMap<String, NodeId>,
+) -> NodeId {
+    dt.type_node_id(custom)
+}
+
+fn data_type_scalar_id(dt: &DataType) -> VariantScalarTypeId {
+    match dt {
+        DataType::Boolean => VariantScalarTypeId::Boolean,
+        DataType::Int16 => VariantScalarTypeId::Int16,
+        DataType::Int32 => VariantScalarTypeId::Int32,
+        DataType::Int64 => VariantScalarTypeId::Int64,
+        DataType::UInt16 => VariantScalarTypeId::UInt16,
+        DataType::UInt32 => VariantScalarTypeId::UInt32,
+        DataType::UInt64 => VariantScalarTypeId::UInt64,
+        DataType::Float => VariantScalarTypeId::Float,
+        DataType::Double => VariantScalarTypeId::Double,
+        DataType::String => VariantScalarTypeId::String,
+        DataType::DateTime => VariantScalarTypeId::DateTime,
+        DataType::ByteString => VariantScalarTypeId::ByteString,
+        DataType::Array { element_type } | DataType::Array2D { element_type, .. } => {
+            data_type_scalar_id(element_type)
+        }
+        DataType::Enum { .. } => VariantScalarTypeId::Int32,
+        DataType::Structure { .. } => VariantScalarTypeId::ExtensionObject,
+    }
+}
+
+fn scalar_id_to_default_variant(scalar: VariantScalarTypeId) -> Variant {
+    match scalar {
+        VariantScalarTypeId::Boolean => Variant::Boolean(false),
+        VariantScalarTypeId::Int16 => Variant::Int16(0),
+        VariantScalarTypeId::Int32 => Variant::Int32(0),
+        VariantScalarTypeId::Int64 => Variant::Int64(0),
+        VariantScalarTypeId::UInt16 => Variant::UInt16(0),
+        VariantScalarTypeId::UInt32 => Variant::UInt32(0),
+        VariantScalarTypeId::UInt64 => Variant::UInt64(0),
+        VariantScalarTypeId::Float => Variant::Float(0.0),
+        VariantScalarTypeId::Double => Variant::Double(0.0),
+        VariantScalarTypeId::String => Variant::String(UAString::from("")),
+        VariantScalarTypeId::DateTime => Variant::Double(0.0),
+        VariantScalarTypeId::ByteString => Variant::String(UAString::from("")),
+        _ => Variant::Empty,
+    }
+}
+
+fn initial_value_for_data_type(dt: &DataType) -> Variant {
+    match dt {
+        DataType::Array { element_type } => {
+            let scalar = data_type_scalar_id(element_type);
+            let element = scalar_id_to_default_variant(scalar);
+            let values: Vec<Variant> = (0..4).map(|_| element.clone()).collect();
+            if let Ok(arr) = Array::new(scalar, values) {
+                Variant::Array(Box::new(arr))
+            } else {
+                Variant::Empty
+            }
+        }
+        DataType::Array2D {
+            element_type,
+            dims,
+        } => {
+            let scalar = data_type_scalar_id(element_type);
+            let element = scalar_id_to_default_variant(scalar);
+            let count = (dims[0] as usize) * (dims[1] as usize);
+            let values: Vec<Variant> = (0..count).map(|_| element.clone()).collect();
+            if let Ok(arr) = Array::new_multi(scalar, values, vec![dims[0], dims[1]]) {
+                Variant::Array(Box::new(arr))
+            } else {
+                Variant::Empty
+            }
+        }
+        DataType::Enum { fields, .. } => {
+            let first_value = fields.first().map(|(v, _)| *v).unwrap_or(0);
+            Variant::Int32(first_value as i32)
+        }
+        DataType::Structure { .. } => Variant::ExtensionObject(ExtensionObject::null()),
+        _ => scalar_id_to_default_variant(data_type_scalar_id(dt)),
+    }
 }
 
 /// Convert a string value to a Variant for the given data type.
@@ -20,10 +104,10 @@ pub fn string_to_variant(value: &str, data_type: &DataType) -> Variant {
             .parse::<i16>()
             .map(Variant::Int16)
             .unwrap_or(Variant::Int16(0)),
-        DataType::Int32 => value
+        DataType::Int32 | DataType::Enum { .. } => value
             .parse::<i32>()
             .map(Variant::Int32)
-            .unwrap_or(Variant::Int32(0)),
+            .unwrap_or_else(|_| initial_value_for_data_type(data_type)),
         DataType::Int64 => value
             .parse::<i64>()
             .map(Variant::Int64)
@@ -51,6 +135,9 @@ pub fn string_to_variant(value: &str, data_type: &DataType) -> Variant {
         DataType::String => Variant::String(UAString::from(value)),
         DataType::DateTime => Variant::String(UAString::from(value)),
         DataType::ByteString => Variant::String(UAString::from(value)),
+        DataType::Array { .. } | DataType::Array2D { .. } | DataType::Structure { .. } => {
+            initial_value_for_data_type(data_type)
+        }
     }
 }
 
@@ -69,6 +156,14 @@ pub fn f64_to_variant(value: f64, data_type: &DataType) -> Variant {
         DataType::String => Variant::String(UAString::from(format!("{:.2}", value))),
         DataType::DateTime => Variant::Double(value),
         DataType::ByteString => Variant::Double(value),
+        DataType::Enum { fields, .. } => {
+            let idx = ((value.round() as i64).rem_euclid(fields.len() as i64)) as usize;
+            let v = fields.get(idx).map(|(v, _)| *v).unwrap_or(0);
+            Variant::Int32(v as i32)
+        }
+        DataType::Array { .. }
+        | DataType::Array2D { .. }
+        | DataType::Structure { .. } => initial_value_for_data_type(data_type),
     }
 }
 
@@ -85,8 +180,8 @@ pub fn populate_address_space(
     namespace_index: u16,
     folders: &[ServerFolder],
     nodes: &[ServerNode],
+    custom: &HashMap<String, NodeId>,
 ) {
-    // Add folders
     for folder in folders {
         let node_id = make_node_id(namespace_index, &folder.node_id);
         let parent_id = make_parent_id(namespace_index, &folder.parent_id);
@@ -98,9 +193,8 @@ pub fn populate_address_space(
         );
     }
 
-    // Add variable nodes
     for node in nodes {
-        add_variable_node(address_space, namespace_index, node);
+        add_variable_node(address_space, namespace_index, node, custom);
     }
 }
 
@@ -109,10 +203,25 @@ pub fn add_variable_node(
     address_space: &mut AddressSpace,
     namespace_index: u16,
     node: &ServerNode,
+    custom: &HashMap<String, NodeId>,
 ) -> bool {
     let node_id = make_node_id(namespace_index, &node.node_id);
     let parent_id = make_parent_id(namespace_index, &node.parent_id);
-    let dt_node_id = data_type_to_node_id(&node.data_type);
+    if node.data_type.is_custom() && node.data_type.register_name().map(|n| custom.get(n)).is_none() {
+        warn!(
+            "Skipping variable '{}': custom type {:?} not registered",
+            node.display_name, node.data_type
+        );
+        return false;
+    }
+    if node.data_type.has_custom_element() {
+        warn!(
+            "Skipping variable '{}': arrays of custom element types are not supported",
+            node.display_name
+        );
+        return false;
+    }
+    let dt_node_id = data_type_to_node_id(&node.data_type, custom);
 
     let initial_value = match &node.simulation {
         SimulationMode::Static { value } => string_to_variant(value, &node.data_type),
@@ -188,5 +297,287 @@ fn make_parent_id(namespace_index: u16, parent_id: &str) -> NodeId {
         NodeId::objects_folder_id()
     } else {
         make_node_id(namespace_index, parent_id)
+    }
+}
+
+/// Collect the unique `Enum`/`Structure` data types referenced by the supplied
+/// server nodes, preserving first-seen order. Entries with a duplicate name
+/// but a different definition are skipped (a warning is logged).
+pub fn collect_custom_data_types(nodes: &[ServerNode]) -> Vec<DataType> {
+    let mut seen_names: HashSet<String> = HashSet::new();
+    let mut out: Vec<DataType> = Vec::new();
+
+    for node in nodes {
+        collect_recursive(&node.data_type, &mut seen_names, &mut out);
+    }
+    out
+}
+
+fn collect_recursive(
+    dt: &DataType,
+    seen_names: &mut HashSet<String>,
+    out: &mut Vec<DataType>,
+) {
+    match dt {
+        DataType::Enum { name, .. } | DataType::Structure { name, .. } => {
+            if seen_names.insert(name.clone()) {
+                match dt {
+                    DataType::Structure { fields, .. } => {
+                        for f in fields {
+                            collect_recursive(&f.data_type, seen_names, out);
+                        }
+                        out.push(dt.clone());
+                    }
+                    DataType::Enum { .. } => {
+                        out.push(dt.clone());
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+        DataType::Array { element_type } | DataType::Array2D { element_type, .. } => {
+            if element_type.is_custom() {
+                warn!(
+                    "Arrays of custom element type ({:?}) are not supported by Task 6",
+                    element_type
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Register the collected custom DataType nodes (and, for `Structure`s, the
+/// companion `DataTypeEncodingType` object nodes) in the supplied address
+/// space. The resulting `HashMap` maps registered type *names* (the
+/// discriminator key used by [`DataType::type_node_id`]) to their
+/// namespace-scoped NodeIds.
+pub fn register_custom_types_in_address_space(
+    address_space: &mut AddressSpace,
+    namespace_index: u16,
+    nodes: &[ServerNode],
+) -> HashMap<String, NodeId> {
+    let collected = collect_custom_data_types(nodes);
+    let mut map: HashMap<String, NodeId> = HashMap::new();
+
+    for (idx, dt) in collected.iter().enumerate() {
+        let type_node_id = NodeId::new(namespace_index, format!("type_{}", idx));
+        let name = match dt.register_name() {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        match dt {
+            DataType::Enum { fields, .. } => {
+                let enum_fields: Vec<EnumField> = fields
+                    .iter()
+                    .map(|(value, display_name)| EnumField {
+                        value: *value,
+                        name: UAString::from(display_name.as_str()),
+                        display_name: LocalizedText::new("", display_name),
+                        ..Default::default()
+                    })
+                    .collect();
+                let def = DataTypeDefinition::Enum(EnumDefinition {
+                    fields: Some(enum_fields),
+                });
+                DataTypeBuilder::new(&type_node_id, &name, &name)
+                    .data_type_definition(def)
+                    .is_abstract(false)
+                    .subtype_of(DataTypeId::Enumeration)
+                    .insert(address_space);
+            }
+            DataType::Structure { fields, .. } => {
+                let encoding_node_id =
+                    NodeId::new(namespace_index, format!("type_{}_be", idx));
+                let struct_fields: Vec<StructureField> = fields
+                    .iter()
+                    .map(|StructField { name: fname, data_type: f_dt }| {
+                        let field_dt = if let Some(registered) =
+                            f_dt.register_name().and_then(|n| map.get(n))
+                        {
+                            registered.clone()
+                        } else {
+                            NodeId::new(0, f_dt.type_id())
+                        };
+                        StructureField {
+                            name: UAString::from(fname.as_str()),
+                            data_type: field_dt,
+                            value_rank: -1,
+                            ..Default::default()
+                        }
+                    })
+                    .collect();
+                let def = DataTypeDefinition::Structure(StructureDefinition {
+                    default_encoding_id: encoding_node_id.clone(),
+                    base_data_type: DataTypeId::Structure.into(),
+                    structure_type: StructureType::Structure,
+                    fields: Some(struct_fields),
+                });
+                DataTypeBuilder::new(&type_node_id, &name, &name)
+                    .data_type_definition(def)
+                    .is_abstract(false)
+                    .subtype_of(DataTypeId::Structure)
+                    .reference(&encoding_node_id, ReferenceTypeId::HasEncoding, ReferenceDirection::Forward)
+                    .insert(address_space);
+                ObjectBuilder::new(&encoding_node_id, "Default Binary", "Default Binary")
+                    .has_type_definition(ObjectTypeId::DataTypeEncodingType)
+                    .reference(&type_node_id, ReferenceTypeId::HasEncoding, ReferenceDirection::Inverse)
+                    .insert(address_space);
+            }
+            _ => continue,
+        }
+        map.insert(name, type_node_id);
+    }
+
+    info!("Registered {} custom type(s) in address space", map.len());
+    map
+}
+
+/// Register the same custom types in the server-level [`DefaultTypeTree`]
+/// (accessible via [`opcua_server::ServerHandle::type_tree`]). This is the
+/// structure the server uses for browse filtering and event filters. The
+/// function is deliberately safe to call after `server.run()` has populated
+/// the tree's core namespaces.
+pub fn register_custom_types_in_type_tree(
+    type_tree: &mut DefaultTypeTree,
+    namespace_index: u16,
+    custom: &HashMap<String, NodeId>,
+    nodes: &[ServerNode],
+) {
+    let mut counter = 0usize;
+    let mut seen: HashSet<String> = HashSet::new();
+
+    fn visit(
+        dt: &DataType,
+        counter: &mut usize,
+        seen: &mut HashSet<String>,
+        namespace_index: u16,
+        custom: &HashMap<String, NodeId>,
+        type_tree: &mut DefaultTypeTree,
+    ) {
+        match dt {
+            DataType::Structure { name, fields, .. } => {
+                if seen.insert(name.clone()) {
+                    for f in fields {
+                        visit(&f.data_type, counter, seen, namespace_index, custom, type_tree);
+                    }
+                    if let Some(type_node_id) = custom.get(name) {
+                        let parent: NodeId = DataTypeId::Structure.into();
+                        type_tree.add_type_node(type_node_id, &parent, NodeClass::DataType);
+                    }
+                    *counter += 1;
+                }
+            }
+            DataType::Enum { name, .. } => {
+                if seen.insert(name.clone()) {
+                    if let Some(type_node_id) = custom.get(name) {
+                        let parent: NodeId = DataTypeId::Enumeration.into();
+                        type_tree.add_type_node(type_node_id, &parent, NodeClass::DataType);
+                    }
+                    *counter += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for node in nodes {
+        visit(
+            &node.data_type,
+            &mut counter,
+            &mut seen,
+            namespace_index,
+            custom,
+            type_tree,
+        );
+    }
+    info!(
+        "Registered {} custom type node(s) in DefaultTypeTree",
+        counter
+    );
+}
+
+#[cfg(test)]
+mod encoding_verification_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use opcua_types::{
+        custom::{DataTypeTree, EncodingIds, ParentIds, StructTypeInfo, TypeInfo},
+        ContextOwned, DecodingOptions, NamespaceMap, NodeId, StructureDefinition, StructureField,
+        StructureType, TypeLoaderCollection, Variant,
+    };
+
+    #[test]
+    fn structure_encoding_via_extension_object() {
+        let mut parent_ids = ParentIds::new();
+        parent_ids.add_type(DataTypeId::Int32.into(), DataTypeId::Int32.into());
+        parent_ids.add_type(DataTypeId::Double.into(), DataTypeId::Double.into());
+
+        let struct_node_id = NodeId::new(2, 5);
+        let binary_encoding_id = NodeId::new(2, 6);
+
+        parent_ids.add_type(struct_node_id.clone(), DataTypeId::Structure.into());
+
+        let mut type_tree = DataTypeTree::new(parent_ids);
+        let struct_def = DataTypeDefinition::Structure(StructureDefinition {
+            default_encoding_id: binary_encoding_id.clone(),
+            base_data_type: DataTypeId::Structure.into(),
+            structure_type: StructureType::Structure,
+            fields: Some(vec![
+                StructureField {
+                    name: UAString::from("A"),
+                    data_type: DataTypeId::Int32.into(),
+                    value_rank: -1,
+                    ..Default::default()
+                },
+                StructureField {
+                    name: UAString::from("B"),
+                    data_type: DataTypeId::Double.into(),
+                    value_rank: -1,
+                    ..Default::default()
+                },
+            ]),
+        });
+        let type_info = TypeInfo::from_type_definition(
+            struct_def,
+            "Sample".to_owned(),
+            Some(EncodingIds {
+                binary_id: binary_encoding_id.clone(),
+                json_id: NodeId::null(),
+                xml_id: NodeId::null(),
+            }),
+            false,
+            &struct_node_id,
+            type_tree.parent_ids(),
+        )
+        .expect("type info from definition");
+        type_tree.add_type(struct_node_id.clone(), type_info);
+        let type_tree = Arc::new(type_tree);
+
+        let struct_info = type_tree
+            .get_struct_type(&struct_node_id)
+            .expect("struct type is registered")
+            .clone();
+        let dynamic = opcua_types::custom::DynamicStructure::new_struct(
+            struct_info,
+            type_tree.clone(),
+            vec![Variant::Int32(7), Variant::Double(3.5)],
+        )
+        .expect("new_struct validates field count + ordering");
+
+        let eo = ExtensionObject::from_message(dynamic);
+        assert_eq!(
+            eo.binary_type_id().node_id,
+            binary_encoding_id,
+            "Encoding ID must match the registered binary_id, otherwise DynamicStructure encoding path is broken",
+        );
+
+        let loader = opcua_types::custom::DynamicTypeLoader::new(type_tree.clone());
+        let mut loaders = TypeLoaderCollection::new_empty();
+        loaders.add_type_loader(loader);
+        let ctx = ContextOwned::new(NamespaceMap::new(), loaders, DecodingOptions::test());
+        let byte_len = opcua_types::BinaryEncodable::byte_len(&eo, &ctx.context());
+        assert!(byte_len > 0, "encoded ExtensionObject must have non-zero length");
     }
 }
