@@ -185,7 +185,10 @@ pub fn string_to_variant(value: &str, data_type: &DataType, custom: &HashMap<Str
                     })
                     .collect();
                 build_structure_variant_from_values(struct_node_id, fields, &field_values, custom)
-                    .unwrap_or_else(|_| Variant::ExtensionObject(ExtensionObject::null()))
+                    .unwrap_or_else(|e| {
+                        warn!("Structure variant construction failed for '{}': {}", name, e);
+                        Variant::ExtensionObject(ExtensionObject::null())
+                    })
             } else {
                 Variant::ExtensionObject(ExtensionObject::null())
             }
@@ -217,206 +220,10 @@ fn parse_struct_field_value(
     string_to_variant("0", field_dt, custom)
 }
 
-fn build_structure_variant_from_values(
+fn build_structure_eo(
     struct_node_id: &NodeId,
     fields: &[StructField],
-    field_values: &[Variant],
-    custom: &HashMap<String, NodeId>,
-) -> Result<Variant, String> {
-    let encoding_id = derive_encoding_node_id(struct_node_id);
-    let mut parent_ids = ParentIds::new();
-    for builtin in [
-        DataTypeId::Boolean,
-        DataTypeId::Int16,
-        DataTypeId::Int32,
-        DataTypeId::Int64,
-        DataTypeId::UInt16,
-        DataTypeId::UInt32,
-        DataTypeId::UInt64,
-        DataTypeId::Float,
-        DataTypeId::Double,
-        DataTypeId::String,
-    ] {
-        let nid: NodeId = builtin.into();
-        parent_ids.add_type(nid.clone(), nid);
-    }
-    for f in fields {
-        register_types_recursive(&f.data_type, custom, &mut parent_ids);
-    }
-
-    let mut type_tree = DataTypeTree::new(parent_ids);
-
-    let struct_fields: Vec<StructureField> = fields
-        .iter()
-        .map(|StructField { name: fname, data_type: f_dt }| {
-            let field_dt = f_dt
-                .register_name()
-                .and_then(|n| custom.get(n))
-                .cloned()
-                .unwrap_or_else(|| NodeId::new(0, f_dt.type_id()));
-            StructureField {
-                name: UAString::from(fname.as_str()),
-                data_type: field_dt,
-                value_rank: -1,
-                ..Default::default()
-            }
-        })
-        .collect();
-
-    let struct_def = DataTypeDefinition::Structure(StructureDefinition {
-        default_encoding_id: encoding_id.clone(),
-        base_data_type: DataTypeId::Structure.into(),
-        structure_type: StructureType::Structure,
-        fields: Some(struct_fields),
-    });
-
-    let type_info = TypeInfo::from_type_definition(
-        struct_def,
-        "DynStruct".to_owned(),
-        Some(EncodingIds {
-            binary_id: encoding_id,
-            json_id: NodeId::null(),
-            xml_id: NodeId::null(),
-        }),
-        false,
-        struct_node_id,
-        type_tree.parent_ids(),
-    )
-    .map_err(|e| format!("TypeInfo construction failed: {e:?}"))?;
-
-    type_tree.add_type(struct_node_id.clone(), type_info);
-    let type_tree = Arc::new(type_tree);
-
-    let struct_info = type_tree
-        .get_struct_type(struct_node_id)
-        .ok_or("struct type not found after registration")?
-        .clone();
-
-    let dynamic = DynamicStructure::new_struct(
-        struct_info,
-        type_tree,
-        field_values.to_vec(),
-    )
-    .map_err(|e| format!("DynamicStructure::new_struct failed: {e:?}"))?;
-
-    let eo = ExtensionObject::from_message(dynamic);
-    Ok(Variant::ExtensionObject(eo))
-}
-
-/// Format a Variant as a human-readable display string.
-/// Arrays: `[1, 2, 3]`, 2D arrays: `[1,2;3,4]`, scalars: default Display.
-pub fn variant_to_display_string(v: &Variant) -> String {
-    match v {
-        Variant::Array(arr) => {
-            if let Some(dims) = &arr.dimensions {
-                if dims.len() >= 2 {
-                    let rows = dims[0] as usize;
-                    let cols = dims[1] as usize;
-                    let mut row_strs = Vec::with_capacity(rows);
-                    for r in 0..rows {
-                        let start = r * cols;
-                        let end = start + cols;
-                        let row_items: Vec<String> = arr.values[start..end.min(arr.values.len())]
-                            .iter()
-                            .map(|v| format!("{v}"))
-                            .collect();
-                        row_strs.push(row_items.join(","));
-                    }
-                    return format!("[{}]", row_strs.join(";"));
-                }
-            }
-            let items: Vec<String> = arr.values.iter().map(|v| format!("{v}")).collect();
-            format!("[{}]", items.join(", "))
-        }
-        _ => format!("{v}"),
-    }
-}
-
-/// Convert an f64 value to a Variant for the given data type.
-/// For complex types (Array, Array2D, Structure), generates proper values using
-/// the registered `custom` type map. Enum cycles through registered fields.
-pub fn f64_to_variant(value: f64, data_type: &DataType, custom: &HashMap<String, NodeId>) -> Variant {
-    match data_type {
-        DataType::Boolean => Variant::Boolean(value > 0.5),
-        DataType::Int16 => Variant::Int16(value.clamp(i16::MIN as f64, i16::MAX as f64) as i16),
-        DataType::Int32 => Variant::Int32(value.clamp(i32::MIN as f64, i32::MAX as f64) as i32),
-        DataType::Int64 => Variant::Int64(value.clamp(i64::MIN as f64, i64::MAX as f64) as i64),
-        DataType::UInt16 => Variant::UInt16(value.clamp(0.0, u16::MAX as f64) as u16),
-        DataType::UInt32 => Variant::UInt32(value.clamp(0.0, u32::MAX as f64) as u32),
-        DataType::UInt64 => Variant::UInt64(value.clamp(0.0, u64::MAX as f64) as u64),
-        DataType::Float => Variant::Float(value as f32),
-        DataType::Double => Variant::Double(value),
-        DataType::String => Variant::String(UAString::from(format!("{:.2}", value))),
-        DataType::DateTime => Variant::Double(value),
-        DataType::ByteString => Variant::Double(value),
-        DataType::Enum { fields, .. } => {
-            let idx = ((value.round() as i64).rem_euclid(fields.len() as i64)) as usize;
-            let v = fields.get(idx).map(|(v, _)| *v).unwrap_or(0);
-            Variant::Int32(v as i32)
-        }
-        DataType::Array { element_type } => {
-            let scalar = data_type_scalar_id(element_type);
-            let values: Vec<Variant> = (0..DEFAULT_ARRAY_LEN)
-                .map(|i| f64_to_variant(value + i as f64, element_type, custom))
-                .collect();
-            Array::new(scalar, values)
-                .map(|arr| Variant::Array(Box::new(arr)))
-                .unwrap_or_else(|_| initial_value_for_data_type(data_type))
-        }
-        DataType::Array2D { element_type, dims } => {
-            let scalar = data_type_scalar_id(element_type);
-            let count = (dims[0] as usize) * (dims[1] as usize);
-            let values: Vec<Variant> = (0..count)
-                .map(|i| f64_to_variant(value + i as f64, element_type, custom))
-                .collect();
-            Array::new_multi(scalar, values, vec![dims[0], dims[1]])
-                .map(|arr| Variant::Array(Box::new(arr)))
-                .unwrap_or_else(|_| initial_value_for_data_type(data_type))
-        }
-        DataType::Structure { name, fields } => {
-            if let Some(struct_node_id) = custom.get(name) {
-                build_structure_variant(struct_node_id, fields, value, custom)
-                    .unwrap_or_else(|_| Variant::ExtensionObject(ExtensionObject::null()))
-            } else {
-                Variant::ExtensionObject(ExtensionObject::null())
-            }
-        }
-    }
-}
-
-fn derive_encoding_node_id(type_node_id: &NodeId) -> NodeId {
-    match &type_node_id.identifier {
-        Identifier::String(s) => {
-            let type_str = s.value().as_deref().unwrap_or_default();
-            NodeId::new(type_node_id.namespace, format!("{}_be", type_str))
-        }
-        _ => NodeId::null(),
-    }
-}
-
-fn register_types_recursive(
-    dt: &DataType,
-    custom: &HashMap<String, NodeId>,
-    parent_ids: &mut ParentIds,
-) {
-    let self_id = dt.type_node_id(custom);
-    let parent_id: NodeId = match dt {
-        DataType::Structure { fields, .. } => {
-            for f in fields {
-                register_types_recursive(&f.data_type, custom, parent_ids);
-            }
-            DataTypeId::Structure.into()
-        }
-        DataType::Enum { .. } => DataTypeId::Enumeration.into(),
-        _ => self_id.clone(),
-    };
-    parent_ids.add_type(self_id, parent_id);
-}
-
-fn build_structure_variant(
-    struct_node_id: &NodeId,
-    fields: &[StructField],
-    seed_value: f64,
+    field_values: Vec<Variant>,
     custom: &HashMap<String, NodeId>,
 ) -> Result<Variant, String> {
     let encoding_id = derive_encoding_node_id(struct_node_id);
@@ -469,10 +276,7 @@ fn build_structure_variant(
         fields: Some(struct_fields),
     });
 
-    let type_name = fields
-        .first()
-        .map(|_| "DynStruct")
-        .unwrap_or("Empty");
+    let type_name = if fields.is_empty() { "Empty" } else { "DynStruct" };
     let type_info = TypeInfo::from_type_definition(
         struct_def,
         type_name.to_owned(),
@@ -495,17 +299,150 @@ fn build_structure_variant(
         .ok_or("struct type not found after registration")?
         .clone();
 
-    let field_values: Vec<Variant> = fields
-        .iter()
-        .enumerate()
-        .map(|(i, f)| f64_to_variant(seed_value + (i as f64) * 0.1, &f.data_type, custom))
-        .collect();
-
     let dynamic = DynamicStructure::new_struct(struct_info, type_tree, field_values)
         .map_err(|e| format!("DynamicStructure::new_struct failed: {e:?}"))?;
 
     let eo = ExtensionObject::from_message(dynamic);
     Ok(Variant::ExtensionObject(eo))
+}
+
+fn build_structure_variant_from_values(
+    struct_node_id: &NodeId,
+    fields: &[StructField],
+    field_values: &[Variant],
+    custom: &HashMap<String, NodeId>,
+) -> Result<Variant, String> {
+    build_structure_eo(struct_node_id, fields, field_values.to_vec(), custom)
+}
+
+/// Format a Variant as a human-readable display string.
+/// Arrays: `[1, 2, 3]`, 2D arrays: `[1,2;3,4]`, scalars: default Display.
+pub fn variant_to_display_string(v: &Variant) -> String {
+    match v {
+        Variant::Array(arr) => {
+            if let Some(dims) = &arr.dimensions {
+                if dims.len() >= 2 {
+                    let rows = dims[0] as usize;
+                    let cols = dims[1] as usize;
+                    let mut row_strs = Vec::with_capacity(rows);
+                    for r in 0..rows {
+                        let start = r * cols;
+                        let end = start + cols;
+                        let row_items: Vec<String> = arr.values[start..end.min(arr.values.len())]
+                            .iter()
+                            .map(|v| format!("{v}"))
+                            .collect();
+                        row_strs.push(row_items.join(","));
+                    }
+                    return format!("[{}]", row_strs.join(";"));
+                }
+            }
+            let items: Vec<String> = arr.values.iter().map(|v| format!("{v}")).collect();
+            format!("[{}]", items.join(", "))
+        }
+        _ => format!("{v}"),
+    }
+}
+
+/// Convert an f64 value to a Variant for the given data type.
+/// For complex types (Array, Array2D, Structure), generates proper values using
+/// the registered `custom` type map. Enum cycles through registered fields.
+pub fn f64_to_variant(value: f64, data_type: &DataType, custom: &HashMap<String, NodeId>) -> Variant {
+    match data_type {
+        DataType::Boolean => Variant::Boolean(value > 0.5),
+        DataType::Int16 => Variant::Int16(value.clamp(i16::MIN as f64, i16::MAX as f64) as i16),
+        DataType::Int32 => Variant::Int32(value.clamp(i32::MIN as f64, i32::MAX as f64) as i32),
+        DataType::Int64 => Variant::Int64(value.clamp(i64::MIN as f64, i64::MAX as f64) as i64),
+        DataType::UInt16 => Variant::UInt16(value.clamp(0.0, u16::MAX as f64) as u16),
+        DataType::UInt32 => Variant::UInt32(value.clamp(0.0, u32::MAX as f64) as u32),
+        DataType::UInt64 => Variant::UInt64(value.clamp(0.0, u64::MAX as f64) as u64),
+        DataType::Float => Variant::Float(value as f32),
+        DataType::Double => Variant::Double(value),
+        DataType::String => Variant::String(UAString::from(format!("{:.2}", value))),
+        DataType::DateTime => Variant::Double(value),
+        DataType::ByteString => Variant::Double(value),
+        DataType::Enum { fields, .. } => {
+            if fields.is_empty() {
+                return Variant::Int32(0);
+            }
+            let idx = ((value.round() as i64).rem_euclid(fields.len() as i64)) as usize;
+            let v = fields.get(idx).map(|(v, _)| *v).unwrap_or(0);
+            Variant::Int32(v as i32)
+        }
+        DataType::Array { element_type } => {
+            let scalar = data_type_scalar_id(element_type);
+            let values: Vec<Variant> = (0..DEFAULT_ARRAY_LEN)
+                .map(|i| f64_to_variant(value + i as f64, element_type, custom))
+                .collect();
+            Array::new(scalar, values)
+                .map(|arr| Variant::Array(Box::new(arr)))
+                .unwrap_or_else(|_| initial_value_for_data_type(data_type))
+        }
+        DataType::Array2D { element_type, dims } => {
+            let scalar = data_type_scalar_id(element_type);
+            let count = (dims[0] as usize) * (dims[1] as usize);
+            let values: Vec<Variant> = (0..count)
+                .map(|i| f64_to_variant(value + i as f64, element_type, custom))
+                .collect();
+            Array::new_multi(scalar, values, vec![dims[0], dims[1]])
+                .map(|arr| Variant::Array(Box::new(arr)))
+                .unwrap_or_else(|_| initial_value_for_data_type(data_type))
+        }
+        DataType::Structure { name, fields } => {
+            if let Some(struct_node_id) = custom.get(name) {
+                build_structure_variant(struct_node_id, fields, value, custom)
+                    .unwrap_or_else(|e| {
+                        warn!("Structure variant construction failed for '{}': {}", name, e);
+                        Variant::ExtensionObject(ExtensionObject::null())
+                    })
+            } else {
+                Variant::ExtensionObject(ExtensionObject::null())
+            }
+        }
+    }
+}
+
+fn derive_encoding_node_id(type_node_id: &NodeId) -> NodeId {
+    match &type_node_id.identifier {
+        Identifier::String(s) => {
+            let type_str = s.value().as_deref().unwrap_or_default();
+            NodeId::new(type_node_id.namespace, format!("{}_be", type_str))
+        }
+        _ => NodeId::null(),
+    }
+}
+
+fn register_types_recursive(
+    dt: &DataType,
+    custom: &HashMap<String, NodeId>,
+    parent_ids: &mut ParentIds,
+) {
+    let self_id = dt.type_node_id(custom);
+    let parent_id: NodeId = match dt {
+        DataType::Structure { fields, .. } => {
+            for f in fields {
+                register_types_recursive(&f.data_type, custom, parent_ids);
+            }
+            DataTypeId::Structure.into()
+        }
+        DataType::Enum { .. } => DataTypeId::Enumeration.into(),
+        _ => self_id.clone(),
+    };
+    parent_ids.add_type(self_id, parent_id);
+}
+
+fn build_structure_variant(
+    struct_node_id: &NodeId,
+    fields: &[StructField],
+    seed_value: f64,
+    custom: &HashMap<String, NodeId>,
+) -> Result<Variant, String> {
+    let field_values: Vec<Variant> = fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| f64_to_variant(seed_value + (i as f64) * 0.1, &f.data_type, custom))
+        .collect();
+    build_structure_eo(struct_node_id, fields, field_values, custom)
 }
 
 /// Parse a node_id string to OPC UA NodeId.

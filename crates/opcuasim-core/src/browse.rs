@@ -239,7 +239,7 @@ fn string_to_variant(value: &str, data_type: &str) -> Result<Variant, OpcUaSimEr
         ))
     };
 
-    if value.contains(';') || value.contains(',') {
+    if data_type != "String" && (value.contains(';') || value.contains(',')) {
         return parse_array_heuristic(value, data_type).map_err(|e| {
             OpcUaSimError::WriteError(format!(
                 "Cannot convert '{}' to {}: {}",
@@ -310,6 +310,7 @@ fn element_scalar_id(data_type: &str) -> VariantScalarTypeId {
         "Int64" => VariantScalarTypeId::Int64,
         "UInt64" => VariantScalarTypeId::UInt64,
         "Float" => VariantScalarTypeId::Float,
+        "String" => VariantScalarTypeId::String,
         "Double" | _ => VariantScalarTypeId::Double,
     }
 }
