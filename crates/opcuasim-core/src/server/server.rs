@@ -13,7 +13,7 @@ use opcua_server::node_manager::memory::{
     InMemoryNodeManager, InMemoryNodeManagerBuilder, InMemoryNodeManagerImplBuilder,
     SimpleNodeManagerBuilder,
 };
-use opcua_server::node_manager::ServerContext;
+use opcua_server::node_manager::{DynNodeManager, NodeManagerBuilder, ServerContext};
 use opcua_server::{
     Server, ServerBuilder, ServerHandle, ServerUserToken, SubscriptionCache,
     ANONYMOUS_USER_TOKEN_ID,
@@ -23,6 +23,7 @@ use opcua_types::{MessageSecurityMode, NodeId};
 use super::address_space::{populate_address_space, register_custom_types_in_address_space};
 use super::event_store::EventStore;
 use super::events::DEMO_EVENTS_ID;
+use super::events_history_node_manager::EventsHistoryNodeManager;
 use super::history_node_manager::HistoryNodeManagerImpl;
 use super::history_store::HistoryStore;
 use super::models::{ServerConfig, ServerFolder, ServerNode, ServerState};
@@ -115,6 +116,18 @@ fn build_server(
         )
     };
 
+    // Wrap the InMemoryNodeManager in our EventsHistoryNodeManager so that
+    // `history_read_events` bypasses the library's incorrect `validate` gate.
+    let event_nm_builder = move |context: ServerContext| -> EventsHistoryNodeManager {
+        let inmem_builder = InMemoryNodeManagerBuilder::new(nm_builder);
+        let dyn_nm: Arc<DynNodeManager> = Box::new(inmem_builder).build(context);
+        let inmem: Arc<InMemoryNodeManager<HistoryNodeManagerImpl>> = dyn_nm
+            .into_any_arc()
+            .downcast::<InMemoryNodeManager<HistoryNodeManagerImpl>>()
+            .expect("failed to downcast InMemoryNodeManager<HistoryNodeManagerImpl>");
+        EventsHistoryNodeManager::new(inmem)
+    };
+
     let mut builder = ServerBuilder::new()
         .application_name(&config.name)
         .application_uri(APPLICATION_URI)
@@ -124,7 +137,7 @@ fn build_server(
         .host("0.0.0.0")
         .port(config.port)
         .trust_client_certs(true)
-        .with_node_manager(InMemoryNodeManagerBuilder::new(nm_builder));
+        .with_node_manager(event_nm_builder);
 
     if config.anonymous_enabled {
         user_token_ids.push(ANONYMOUS_USER_TOKEN_ID.to_string());
@@ -194,13 +207,10 @@ fn build_server(
         .map_err(|e| OpcUaSimError::ServerError(format!("Server build failed: {}", e)))?;
 
     let node_managers = handle.node_managers();
-    let sim_nm = node_managers
-        .get_of_type::<InMemoryNodeManager<HistoryNodeManagerImpl>>()
-        .ok_or_else(|| {
-            OpcUaSimError::ServerError(
-                "InMemoryNodeManager<HistoryNodeManagerImpl> not found".into(),
-            )
-        })?;
+    let wrapper = node_managers
+        .get_of_type::<EventsHistoryNodeManager>()
+        .ok_or_else(|| OpcUaSimError::ServerError("EventsHistoryNodeManager not found".into()))?;
+    let sim_nm = wrapper.inner().clone();
 
     let ns_index = {
         let ns = sim_nm.namespaces();
