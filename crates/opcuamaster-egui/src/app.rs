@@ -2,7 +2,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::events::{BackendEvent, UiCommand};
 use crate::model::{AppModel, Modal};
-use crate::panels::{browse_panel, connection_tree, data_table, log_panel, toolbar, value_panel};
+use crate::panels::{
+    browse_panel, connection_tree, data_table, events_panel, log_panel, toolbar, value_panel,
+};
 use crate::runtime::BackendHandle;
 use crate::widgets::connection_dialog;
 
@@ -209,6 +211,15 @@ impl MasterApp {
                     tab.set_points(points);
                     tab.error = error;
                     tab.last_loaded = Some(std::time::Instant::now());
+                }
+            }
+            BackendEvent::EventItems {
+                conn_id,
+                items,
+                full,
+            } => {
+                if self.model.events.selected_conn.as_deref() == Some(&conn_id) {
+                    events_panel::apply_event_items(&mut self.model.events, items, full);
                 }
             }
             BackendEvent::CertificateList {
@@ -452,6 +463,16 @@ impl eframe::App for MasterApp {
                                 crate::model::CentralPanelTab::History(clamped);
                         }
                     }
+                    let events_selected = matches!(
+                        self.model.central_tab,
+                        crate::model::CentralPanelTab::EventsPanel
+                    );
+                    if tab_button(ui, events_selected, "🔔  事件", false)
+                        .0
+                        .clicked()
+                    {
+                        self.model.central_tab = crate::model::CentralPanelTab::EventsPanel;
+                    }
                 });
                 ui.add_space(4.0);
 
@@ -479,6 +500,9 @@ impl eframe::App for MasterApp {
                         } else {
                             self.model.central_tab = crate::model::CentralPanelTab::DataTable;
                         }
+                    }
+                    crate::model::CentralPanelTab::EventsPanel => {
+                        events_panel::show(ui, &mut self.model, &self.backend);
                     }
                 }
             });

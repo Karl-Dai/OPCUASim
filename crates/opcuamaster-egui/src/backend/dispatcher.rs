@@ -52,6 +52,13 @@ pub async fn run(
         cancel.clone(),
         egui_ctx.clone(),
     ));
+    // Spawn 500ms event log poller
+    tokio::spawn(event_timer(
+        state.clone(),
+        event_tx.clone(),
+        cancel.clone(),
+        egui_ctx.clone(),
+    ));
 
     loop {
         tokio::select! {
@@ -251,6 +258,14 @@ async fn handle_cmd(
             )
             .await
         }
+        UiCommand::SubscribeEvents {
+            conn_id,
+            source_node_id,
+        } => do_subscribe_events(conn_id, source_node_id, &state, &event_tx).await,
+        UiCommand::UnsubscribeEvents { conn_id } => {
+            do_unsubscribe_events(conn_id, &state, &event_tx).await
+        }
+        UiCommand::ClearEvents { conn_id } => do_clear_events(conn_id, &state, &event_tx).await,
     };
 
     if let Err(e) = result {
@@ -1416,4 +1431,131 @@ fn parse_iso_to_datetime(s: &str) -> Result<opcua_types::DateTime, String> {
         .map_err(|e| format!("invalid time '{s}': {e}"))?;
     let utc: chrono::DateTime<chrono::Utc> = parsed.with_timezone(&chrono::Utc);
     Ok(opcua_types::DateTime::from(utc))
+}
+
+async fn event_timer(
+    state: Arc<BackendState>,
+    event_tx: UnboundedSender<BackendEvent>,
+    cancel: CancellationToken,
+    egui_ctx: egui::Context,
+) {
+    let mut interval = tokio::time::interval(Duration::from_millis(500));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let last_len: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            _ = interval.tick() => {
+                let sub_mgrs: Vec<(String, SubscriptionManager)> = match state.connections.read() {
+                    Ok(conns) => conns.iter().map(|(id, e)| (id.clone(), e.subscription_mgr.clone())).collect(),
+                    Err(_) => continue,
+                };
+                let mut any_sent = false;
+                for (conn_id, sub_mgr) in sub_mgrs {
+                    let event_log = sub_mgr.get_event_log().await;
+                    let Some(log) = event_log else { continue };
+                    let current_len = log.len();
+                    let last = {
+                        let map = last_len.lock().await;
+                        map.get(&conn_id).copied().unwrap_or(0)
+                    };
+                    if current_len == last {
+                        continue;
+                    }
+                    let all_items = log.items_sync();
+                    let items: Vec<crate::events::EventItemDto> = all_items
+                        .into_iter()
+                        .map(|e| crate::events::EventItemDto {
+                            time: e.time,
+                            severity: e.severity,
+                            source: e.source,
+                            message: e.message,
+                            event_type: e.event_type,
+                        })
+                        .collect();
+                    let full = last == 0;
+                    let _ = event_tx.send(BackendEvent::EventItems {
+                        conn_id: conn_id.clone(),
+                        items,
+                        full,
+                    });
+                    {
+                        let mut map = last_len.lock().await;
+                        map.insert(conn_id, current_len);
+                    }
+                    any_sent = true;
+                }
+                if any_sent {
+                    egui_ctx.request_repaint();
+                }
+            }
+        }
+    }
+}
+
+async fn do_subscribe_events(
+    conn_id: String,
+    source_node_id: String,
+    state: &Arc<BackendState>,
+    event_tx: &UnboundedSender<BackendEvent>,
+) -> Result<(), String> {
+    let (sub_mgr, session_holder) = {
+        let conns = state.connections.read().map_err(|e| e.to_string())?;
+        let entry = conns.get(&conn_id).ok_or("Connection not found")?;
+        (
+            entry.subscription_mgr.clone(),
+            entry.connection.get_session_holder(),
+        )
+    };
+
+    let nid: opcua_types::NodeId = source_node_id
+        .parse()
+        .map_err(|_| format!("invalid source node id: {source_node_id}"))?;
+
+    let session_guard = session_holder.read().await;
+    let session = session_guard.as_ref().ok_or("Not connected — no active session")?;
+    sub_mgr
+        .subscribe_to_events(session, &nid)
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(session_guard);
+
+    let _ = event_tx.send(BackendEvent::Toast {
+        level: ToastLevel::Info,
+        message: "事件订阅已建立".into(),
+    });
+    Ok(())
+}
+
+async fn do_unsubscribe_events(
+    conn_id: String,
+    state: &Arc<BackendState>,
+    event_tx: &UnboundedSender<BackendEvent>,
+) -> Result<(), String> {
+    let sub_mgr = {
+        let conns = state.connections.read().map_err(|e| e.to_string())?;
+        let entry = conns.get(&conn_id).ok_or("Connection not found")?;
+        entry.subscription_mgr.clone()
+    };
+    sub_mgr.unsubscribe_events().await.map_err(|e| e.to_string())?;
+    let _ = event_tx.send(BackendEvent::Toast {
+        level: ToastLevel::Info,
+        message: "事件订阅已取消".into(),
+    });
+    Ok(())
+}
+
+async fn do_clear_events(
+    conn_id: String,
+    state: &Arc<BackendState>,
+    _event_tx: &UnboundedSender<BackendEvent>,
+) -> Result<(), String> {
+    let sub_mgr = {
+        let conns = state.connections.read().map_err(|e| e.to_string())?;
+        let entry = conns.get(&conn_id).ok_or("Connection not found")?;
+        entry.subscription_mgr.clone()
+    };
+    sub_mgr.clear_events().await;
+    Ok(())
 }

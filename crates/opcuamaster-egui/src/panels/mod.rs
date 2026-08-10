@@ -1,6 +1,7 @@
 pub mod browse_panel;
 pub mod connection_tree;
 pub mod data_table;
+pub mod events_panel;
 pub mod history_tab;
 pub mod log_panel;
 pub mod toolbar;

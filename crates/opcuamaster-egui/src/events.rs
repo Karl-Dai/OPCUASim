@@ -94,6 +94,16 @@ pub enum UiCommand {
         max_values: u32,
         req_id: u64,
     },
+    SubscribeEvents {
+        conn_id: String,
+        source_node_id: String,
+    },
+    UnsubscribeEvents {
+        conn_id: String,
+    },
+    ClearEvents {
+        conn_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -225,6 +235,11 @@ pub enum BackendEvent {
         points: Vec<HistoryPointDto>,
         error: Option<String>,
     },
+    EventItems {
+        conn_id: String,
+        items: Vec<EventItemDto>,
+        full: bool,
+    },
     Toast {
         level: ToastLevel,
         message: String,
@@ -328,4 +343,13 @@ pub struct NodeGroupDto {
     pub id: String,
     pub name: String,
     pub node_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventItemDto {
+    pub time: String,
+    pub severity: u16,
+    pub source: String,
+    pub message: String,
+    pub event_type: String,
 }
