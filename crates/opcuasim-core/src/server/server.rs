@@ -18,6 +18,8 @@ use opcua_server::{
 use opcua_types::MessageSecurityMode;
 
 use super::address_space::populate_address_space;
+use super::event_store::EventStore;
+use super::events::DEMO_EVENTS_ID;
 use super::history_node_manager::HistoryNodeManagerImpl;
 use super::history_store::HistoryStore;
 use super::models::{ServerConfig, ServerFolder, ServerNode, ServerState};
@@ -34,6 +36,7 @@ pub struct OpcUaServer {
     node_manager: Arc<RwLock<Option<Arc<InMemoryNodeManager<HistoryNodeManagerImpl>>>>>,
     simulation_engine: Arc<RwLock<Option<Arc<SimulationEngine>>>>,
     namespace_index: Arc<RwLock<u16>>,
+    event_store: Arc<RwLock<Option<Arc<EventStore>>>>,
 }
 
 /// Result of building the server (all sync, no async).
@@ -197,6 +200,7 @@ impl OpcUaServer {
             node_manager: Arc::new(RwLock::new(None)),
             simulation_engine: Arc::new(RwLock::new(None)),
             namespace_index: Arc::new(RwLock::new(2)),
+            event_store: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -240,6 +244,24 @@ impl OpcUaServer {
         *self.namespace_index.write().await = ns_index;
         *self.handle.write().await = Some(handle);
         *self.node_manager.write().await = Some(sim_nm.clone());
+
+        // EventStore capacity is hardcoded until Task 5 adds config.event_history_size
+        let event_store = Arc::new(EventStore::new(10_000));
+        *self.event_store.write().await = Some(event_store.clone());
+
+        {
+            let mut addr = sim_nm.address_space().write();
+            let _ = super::events::build_events_object(&mut *addr, ns_index);
+        }
+
+        let events_source = opcua_types::NodeId::new(ns_index, DEMO_EVENTS_ID);
+        super::events::register_raise_event_method(
+            &sim_nm,
+            ns_index,
+            subscriptions.clone(),
+            Some(event_store.clone()),
+            events_source,
+        );
 
         // Start simulation engine
         let sim_engine = Arc::new(SimulationEngine::new());
@@ -310,6 +332,10 @@ impl OpcUaServer {
     /// Get a reference to the simulation engine (if server is running).
     pub async fn simulation_engine(&self) -> Option<Arc<SimulationEngine>> {
         self.simulation_engine.read().await.clone()
+    }
+
+    pub async fn event_store(&self) -> Option<Arc<EventStore>> {
+        self.event_store.read().await.clone()
     }
 }
 

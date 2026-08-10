@@ -123,7 +123,7 @@ pub async fn register_demo_methods(
     Ok(ids)
 }
 
-fn arg(name: &str, data_type: DataTypeId) -> Argument {
+pub(crate) fn arg(name: &str, data_type: DataTypeId) -> Argument {
     Argument {
         name: UAString::from(name),
         data_type: data_type.into(),
@@ -133,7 +133,7 @@ fn arg(name: &str, data_type: DataTypeId) -> Argument {
     }
 }
 
-fn register_method(
+pub(crate) fn register_method(
     nm: &Arc<InMemoryNodeManager<HistoryNodeManagerImpl>>,
     ns: u16,
     node_id_str: &str,
