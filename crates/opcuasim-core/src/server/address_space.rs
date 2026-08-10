@@ -207,7 +207,7 @@ pub fn add_variable_node(
 ) -> bool {
     let node_id = make_node_id(namespace_index, &node.node_id);
     let parent_id = make_parent_id(namespace_index, &node.parent_id);
-    if node.data_type.is_custom() && node.data_type.register_name().map(|n| custom.get(n)).is_none() {
+    if node.data_type.is_custom() && node.data_type.register_name().and_then(|n| custom.get(n)).is_none() {
         warn!(
             "Skipping variable '{}': custom type {:?} not registered",
             node.display_name, node.data_type
@@ -333,6 +333,8 @@ fn collect_recursive(
                     }
                     _ => unreachable!(),
                 }
+            } else {
+                warn!("Duplicate custom data type name '{}' skipped", name);
             }
         }
         DataType::Array { element_type } | DataType::Array2D { element_type, .. } => {
@@ -440,7 +442,6 @@ pub fn register_custom_types_in_address_space(
 /// the tree's core namespaces.
 pub fn register_custom_types_in_type_tree(
     type_tree: &mut DefaultTypeTree,
-    namespace_index: u16,
     custom: &HashMap<String, NodeId>,
     nodes: &[ServerNode],
 ) {
@@ -451,7 +452,6 @@ pub fn register_custom_types_in_type_tree(
         dt: &DataType,
         counter: &mut usize,
         seen: &mut HashSet<String>,
-        namespace_index: u16,
         custom: &HashMap<String, NodeId>,
         type_tree: &mut DefaultTypeTree,
     ) {
@@ -459,7 +459,7 @@ pub fn register_custom_types_in_type_tree(
             DataType::Structure { name, fields, .. } => {
                 if seen.insert(name.clone()) {
                     for f in fields {
-                        visit(&f.data_type, counter, seen, namespace_index, custom, type_tree);
+                        visit(&f.data_type, counter, seen, custom, type_tree);
                     }
                     if let Some(type_node_id) = custom.get(name) {
                         let parent: NodeId = DataTypeId::Structure.into();
@@ -486,7 +486,6 @@ pub fn register_custom_types_in_type_tree(
             &node.data_type,
             &mut counter,
             &mut seen,
-            namespace_index,
             custom,
             type_tree,
         );

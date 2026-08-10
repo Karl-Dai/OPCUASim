@@ -303,7 +303,6 @@ impl OpcUaServer {
         // clients can resolve the types when browsing.
         super::address_space::register_custom_types_in_type_tree(
             &mut *handle.type_tree().write(),
-            ns_index,
             &custom_types,
             nodes,
         );
