@@ -19,10 +19,13 @@ use super::models::{DataType, ServerNode, SimulationMode};
 #[derive(Clone)]
 struct NodeSimState {
     node_id_str: String,
+    display_name: String,
     opcua_node_id: NodeId,
     data_type: DataType,
     simulation: SimulationMode,
     iteration: u64,
+    eu_range_low: f64,
+    eu_range_high: f64,
 }
 
 /// The simulation engine drives value generation for all non-Static nodes.
@@ -34,6 +37,11 @@ pub struct SimulationEngine {
     /// Map of node_id -> current_value for incremental polling from frontend.
     current_values: Arc<RwLock<HashMap<String, (String, u64)>>>,
     history_store: Arc<RwLock<Option<Arc<HistoryStore>>>>,
+    /// Per-node alarm state: node_id_string → alarm_active (transitions fire events).
+    alarm_states: Arc<RwLock<HashMap<String, bool>>>,
+    /// Sync callback invoked inside the simulation task to emit threshold events.
+    /// `Fn(message: &str, severity: u16)`.
+    event_notifier: Arc<RwLock<Option<Arc<dyn Fn(&str, u16) + Send + Sync>>>>,
 }
 
 impl SimulationEngine {
@@ -44,12 +52,20 @@ impl SimulationEngine {
             update_seq: Arc::new(RwLock::new(0)),
             current_values: Arc::new(RwLock::new(HashMap::new())),
             history_store: Arc::new(RwLock::new(None)),
+            alarm_states: Arc::new(RwLock::new(HashMap::new())),
+            event_notifier: Arc::new(RwLock::new(None)),
         }
     }
 
     /// Attach the history store; simulation updates will be recorded there.
     pub async fn set_history_store(&self, store: Arc<HistoryStore>) {
         *self.history_store.write().await = Some(store);
+    }
+
+    /// Attach an event notifier; simulation will emit threshold alarm /
+    /// recovery events through this callback on state transitions.
+    pub async fn set_event_notifier(&self, notifier: Arc<dyn Fn(&str, u16) + Send + Sync>) {
+        *self.event_notifier.write().await = Some(notifier);
     }
 
     /// Register nodes for simulation. Must be called before start().
@@ -65,10 +81,13 @@ impl SimulationEngine {
                 node.node_id.clone(),
                 NodeSimState {
                     node_id_str: node.node_id.clone(),
+                    display_name: node.display_name.clone(),
                     data_type: node.data_type.clone(),
                     simulation: node.simulation.clone(),
                     opcua_node_id,
                     iteration: 0,
+                    eu_range_low: node.eu_range_low,
+                    eu_range_high: node.eu_range_high,
                 },
             );
         }
@@ -87,6 +106,8 @@ impl SimulationEngine {
         let update_seq = self.update_seq.clone();
         let current_values = self.current_values.clone();
         let history_store = self.history_store.clone();
+        let alarm_states = self.alarm_states.clone();
+        let event_notifier = self.event_notifier.clone();
 
         tokio::spawn(async move {
             // Group nodes by interval
@@ -114,6 +135,8 @@ impl SimulationEngine {
                 let seq = update_seq.clone();
                 let vals = current_values.clone();
                 let hs = history_store.clone();
+                let as_ = alarm_states.clone();
+                let en = event_notifier.clone();
 
                 let handle = tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
@@ -129,6 +152,7 @@ impl SimulationEngine {
                                 // Generate values for all nodes in this group
                                 let mut updates: Vec<(&NodeId, Option<&NumericRange>, DataValue)> = Vec::new();
                                 let mut value_strings: Vec<(String, String)> = Vec::new();
+                                let mut alarm_events: Vec<(String, String, u16)> = Vec::new();
 
                                 for node_state in &mut group_nodes {
                                     if let Some(raw_value) = generate_value(
@@ -151,12 +175,68 @@ impl SimulationEngine {
                                             store.record(&node_state.opcua_node_id, dv.clone()).await;
                                         }
 
+                                        // Threshold alarm detection (numeric nodes only).
+                                        if node_state.data_type.is_numeric() {
+                                            let is_out =
+                                                raw_value < node_state.eu_range_low
+                                                    || raw_value > node_state.eu_range_high;
+                                            let was_active = {
+                                                let guard = as_.read().await;
+                                                *guard.get(&node_state.node_id_str).unwrap_or(&false)
+                                            };
+                                            match (is_out, was_active) {
+                                                (true, false) => {
+                                                    let msg = format!(
+                                                        "{} exceeded limit ({}..{})",
+                                                        node_state.display_name,
+                                                        node_state.eu_range_low,
+                                                        node_state.eu_range_high,
+                                                    );
+                                                    alarm_events.push((
+                                                        node_state.node_id_str.clone(),
+                                                        msg,
+                                                        500,
+                                                    ));
+                                                    as_.write()
+                                                        .await
+                                                        .insert(node_state.node_id_str.clone(), true);
+                                                }
+                                                (false, true) => {
+                                                    let msg = format!(
+                                                        "{} back to normal",
+                                                        node_state.display_name,
+                                                    );
+                                                    alarm_events.push((
+                                                        node_state.node_id_str.clone(),
+                                                        msg,
+                                                        100,
+                                                    ));
+                                                    as_.write()
+                                                        .await
+                                                        .insert(node_state.node_id_str.clone(), false);
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+
                                         updates.push((
                                             &node_state.opcua_node_id,
                                             None,
                                             dv,
                                         ));
                                         node_state.iteration += 1;
+                                    }
+                                }
+
+                                // Emit alarm events (after dropping all per-node locks).
+                                if !alarm_events.is_empty() {
+                                    if let Some(notifier) = {
+                                        let guard = en.read().await;
+                                        guard.clone()
+                                    } {
+                                        for (_nid, msg, severity) in &alarm_events {
+                                            notifier(msg.as_str(), *severity);
+                                        }
                                     }
                                 }
 

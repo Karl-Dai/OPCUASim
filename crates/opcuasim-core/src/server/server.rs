@@ -274,6 +274,22 @@ impl OpcUaServer {
         let sim_engine = Arc::new(SimulationEngine::new());
         sim_engine.register_nodes(nodes, ns_index).await;
         sim_engine.set_history_store(history.clone()).await;
+        {
+            let subs_for_alarm = subscriptions.clone();
+            let store_for_alarm: Option<Arc<EventStore>> = Some(event_store.clone());
+            let source_for_alarm = events_source.clone();
+            let notifier: Arc<dyn Fn(&str, u16) + Send + Sync> =
+                Arc::new(move |message: &str, severity: u16| {
+                    super::events::notify_event(
+                        &subs_for_alarm,
+                        &store_for_alarm,
+                        &source_for_alarm,
+                        message,
+                        severity,
+                    );
+                });
+            sim_engine.set_event_notifier(notifier).await;
+        }
         sim_engine.start(sim_nm.clone(), subscriptions.clone());
         *self.simulation_engine.write().await = Some(sim_engine.clone());
 
