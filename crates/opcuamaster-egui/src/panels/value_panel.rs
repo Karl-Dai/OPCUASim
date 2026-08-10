@@ -171,6 +171,9 @@ fn parse_check(data_type: &str, raw: &str) -> Option<&'static str> {
     if s.is_empty() {
         return None;
     }
+    if s.contains(',') || s.contains(';') {
+        return None;
+    }
     match data_type {
         "Boolean" => {
             let lower = s.to_ascii_lowercase();

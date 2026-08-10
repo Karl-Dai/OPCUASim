@@ -70,6 +70,7 @@ async fn master_full_flow() {
         max_sessions: 10,
         max_subscriptions_per_session: 10,
         history_buffer_size: 10_000,
+        event_history_size: 1_000,
     };
     let folders = vec![ServerFolder {
         node_id: "Demo".into(),
@@ -407,6 +408,7 @@ async fn deadband_reduces_samples() {
         max_sessions: 10,
         max_subscriptions_per_session: 10,
         history_buffer_size: 10_000,
+        event_history_size: 1_000,
     };
     let folders = vec![ServerFolder {
         node_id: "Demo".into(),
@@ -543,6 +545,7 @@ async fn method_call_echo() {
         max_sessions: 10,
         max_subscriptions_per_session: 10,
         history_buffer_size: 10_000,
+        event_history_size: 1_000,
     };
     server.start(&config, &[], &[]).await.expect("server start");
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -631,6 +634,149 @@ async fn method_call_echo() {
         outputs[0].value.contains("hello"),
         "expected output to contain 'hello', got {:?}",
         outputs[0].value
+    );
+
+    tokio::task::spawn_blocking(move || drop(backend))
+        .await
+        .expect("drop backend");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    server.stop().await.expect("server stop");
+}
+
+const EVENT_PORT: u16 = 48413;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn event_subscription_via_master() {
+    let _ = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,opcua=warn"),
+    )
+    .is_test(true)
+    .try_init();
+
+    let server = Arc::new(OpcUaServer::new());
+    let config = ServerConfig {
+        name: "EventTestServer".into(),
+        endpoint_url: format!("opc.tcp://127.0.0.1:{EVENT_PORT}"),
+        port: EVENT_PORT,
+        security_policies: vec!["None".into()],
+        security_modes: vec!["None".into()],
+        users: Vec::new(),
+        anonymous_enabled: true,
+        max_sessions: 10,
+        max_subscriptions_per_session: 10,
+        history_buffer_size: 10_000,
+        event_history_size: 1_000,
+    };
+    server.start(&config, &[], &[]).await.expect("server start");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let ctx = egui::Context::default();
+    let (backend, mut rx) = BackendHandle::new(
+        ctx,
+        "event-master",
+        opcuamaster_egui::backend::dispatcher::run,
+    );
+
+    let mut saw_log = false;
+
+    backend.send(UiCommand::CreateConnection(CreateConnectionReq {
+        name: "event".into(),
+        endpoint_url: format!("opc.tcp://127.0.0.1:{EVENT_PORT}"),
+        security_policy: "None".into(),
+        security_mode: "None".into(),
+        auth: AuthKindReq::Anonymous,
+        timeout_ms: 5000,
+    }));
+    let conn_id = loop {
+        let ev = recv_until(&mut rx, 5, &mut saw_log, |e| {
+            matches!(e, BackendEvent::Connections(_))
+        })
+        .await;
+        if let BackendEvent::Connections(list) = ev {
+            if let Some(c) = list.into_iter().find(|c| c.name == "event") {
+                break c.id;
+            }
+        }
+    };
+    backend.send(UiCommand::Connect(conn_id.clone()));
+    let _ = recv_until(
+        &mut rx,
+        8,
+        &mut saw_log,
+        |e| matches!(e, BackendEvent::ConnectionStateChanged { state, .. } if state == "Connected"),
+    )
+    .await;
+
+    backend.send(UiCommand::SubscribeEventInFlight {
+        conn_id: conn_id.clone(),
+        req_id: 40,
+        source_node_id: "ns=2;s=DemoEvents".into(),
+    });
+    let sub_ev = recv_until(&mut rx, 5, &mut saw_log, |e| {
+        matches!(e, BackendEvent::EventSubscribeResult { req_id: 40, .. })
+    })
+    .await;
+    let BackendEvent::EventSubscribeResult { ok, detail, .. } = sub_ev else {
+        unreachable!()
+    };
+    assert!(ok, "event subscription failed: {:?}", detail);
+
+    backend.send(UiCommand::CallMethod {
+        conn_id: conn_id.clone(),
+        object_id: "i=85".into(),
+        method_id: "ns=2;s=Demo.RaiseEvent".into(),
+        inputs: vec![
+            MethodArgValue {
+                data_type: "UInt16".into(),
+                value: "800".into(),
+            },
+            MethodArgValue {
+                data_type: "String".into(),
+                value: "master-test".into(),
+            },
+        ],
+        req_id: 41,
+    });
+    let _ = recv_until(&mut rx, 5, &mut saw_log, |e| {
+        matches!(e, BackendEvent::MethodCallResult { req_id: 41, .. })
+    })
+    .await;
+
+    // event_timer polls every 500ms; wait up to 12s for master-test event.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+    let mut got_master_test = false;
+    let mut got_heartbeat = false;
+    while tokio::time::Instant::now() < deadline {
+        let ev = tokio::time::timeout(Duration::from_millis(600), rx.recv())
+            .await
+            .ok()
+            .flatten();
+        if let Some(BackendEvent::CommLogEntries { entries, .. }) = &ev {
+            if !entries.is_empty() {
+                saw_log = true;
+            }
+        }
+        if let Some(BackendEvent::EventItems { items, .. }) = ev {
+            for it in &items {
+                if it.message.contains("master-test") {
+                    got_master_test = true;
+                }
+                if it.message.contains("Heartbeat") {
+                    got_heartbeat = true;
+                }
+            }
+            if got_master_test {
+                break;
+            }
+        }
+    }
+    assert!(
+        got_master_test,
+        "expected 'master-test' event from RaiseEvent via master"
+    );
+    println!(
+        "[OK] master event_subscription: master-test={}, heartbeat={}",
+        got_master_test, got_heartbeat
     );
 
     tokio::task::spawn_blocking(move || drop(backend))

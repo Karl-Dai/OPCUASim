@@ -58,7 +58,9 @@ pub fn generate_value(mode: &SimulationMode, elapsed_secs: f64, iteration: u64) 
 pub fn f64_to_string(value: f64, data_type: &DataType) -> String {
     match data_type {
         DataType::Boolean => if value > 0.5 { "true" } else { "false" }.to_string(),
-        DataType::Int16 => (value.clamp(i16::MIN as f64, i16::MAX as f64) as i16).to_string(),
+        DataType::Int16 | DataType::Enum { .. } => {
+            (value.clamp(i32::MIN as f64, i32::MAX as f64) as i32).to_string()
+        }
         DataType::Int32 => (value.clamp(i32::MIN as f64, i32::MAX as f64) as i32).to_string(),
         DataType::Int64 => (value.clamp(i64::MIN as f64, i64::MAX as f64) as i64).to_string(),
         DataType::UInt16 => (value.clamp(0.0, u16::MAX as f64) as u16).to_string(),
@@ -68,5 +70,12 @@ pub fn f64_to_string(value: f64, data_type: &DataType) -> String {
         DataType::Double => format!("{:.6}", value),
         DataType::String => format!("{:.2}", value),
         DataType::DateTime | DataType::ByteString => format!("{:.2}", value),
+        DataType::Array { element_type, .. } | DataType::Array2D { element_type, .. } => {
+            f64_to_string(value, element_type)
+        }
+        // Structures have no single f64 scalar representation (Task 7 will
+        // build structured ExtensionObject values); fall back to the raw f64
+        // so callers still receive a deterministic string.
+        DataType::Structure { .. } => format!("{:.6}", value),
     }
 }

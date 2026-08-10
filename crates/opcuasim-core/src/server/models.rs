@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StructField {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub data_type: DataType,
+}
+
 /// OPC UA data types supported by the simulation server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DataType {
@@ -15,10 +22,40 @@ pub enum DataType {
     String,
     DateTime,
     ByteString,
+    /// One-dimensional array of scalar elements (Task 7 will supply values).
+    Array {
+        #[serde(rename = "elementType")]
+        element_type: Box<DataType>,
+    },
+    /// Two-dimensional array (matrix). `dims = [rows, cols]`.
+    Array2D {
+        #[serde(rename = "elementType")]
+        element_type: Box<DataType>,
+        dims: [u32; 2],
+    },
+    /// User-defined enumeration: `(value, display_name)` pairs.
+    Enum {
+        name: String,
+        fields: Vec<(i64, String)>,
+    },
+    /// User-defined structure encoded as `ExtensionObject` (DynamicStructure +
+    /// a registered binary encoding ID).
+    Structure {
+        name: String,
+        fields: Vec<StructField>,
+    },
 }
 
 impl DataType {
-    /// Return the OPC UA DataTypeId numeric value (namespace 0).
+    /// Return the OPC UA DataTypeId numeric value (namespace 0) for the
+    /// underlying scalar carried by this type.
+    ///
+    /// For complex types we follow the OPC UA type hierarchy:
+    ///  - `Enum` values are transmitted as `Int32`
+    ///  - `Structure` is transmitted as `ExtensionObject` whose encoding ID
+    ///    maps back to the registered data type node (handled by
+    ///    [`Self::type_node_id`]).
+    ///  - `Array`/`Array2D` elements carry the scalar's DataTypeId.
     pub fn type_id(&self) -> u32 {
         match self {
             DataType::Boolean => 1,
@@ -33,6 +70,58 @@ impl DataType {
             DataType::String => 12,
             DataType::DateTime => 13,
             DataType::ByteString => 15,
+            DataType::Array { element_type } | DataType::Array2D { element_type, .. } => {
+                element_type.type_id()
+            }
+            DataType::Enum { .. } => 6,
+            DataType::Structure { .. } => 22,
+        }
+    }
+
+    /// Resolve this type to the full `NodeId` used as the `DataType` attribute
+    /// of a `Variable` node. Scalar types map to namespace-0 `DataTypeId`
+    /// values; complex types return the custom `NodeId` registered by
+    /// [`super::address_space::register_custom_types`].
+    pub fn type_node_id(
+        &self,
+        custom: &std::collections::HashMap<String, opcua_types::NodeId>,
+    ) -> opcua_types::NodeId {
+        match self {
+            DataType::Enum { name, .. } | DataType::Structure { name, .. } => {
+                if let Some(id) = custom.get(name) {
+                    id.clone()
+                } else {
+                    opcua_types::NodeId::new(0, self.type_id())
+                }
+            }
+            _ => opcua_types::NodeId::new(0, self.type_id()),
+        }
+    }
+
+    /// Return the registration key used as the HashMap key inside
+    /// [`super::address_space::register_custom_types`]. `None` for scalar
+    /// and array types (those do not need custom DataType nodes).
+    pub fn register_name(&self) -> Option<&str> {
+        match self {
+            DataType::Enum { name, .. } | DataType::Structure { name, .. } => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Whether this type requires a registered custom DataType node
+    /// (`Enum` or `Structure`).
+    pub fn is_custom(&self) -> bool {
+        matches!(self, DataType::Enum { .. } | DataType::Structure { .. })
+    }
+
+    /// Whether this type's element type is itself a custom type (array of
+    /// structures/enums). Those are not supported in this task.
+    pub fn has_custom_element(&self) -> bool {
+        match self {
+            DataType::Array { element_type } | DataType::Array2D { element_type, .. } => {
+                element_type.is_custom()
+            }
+            _ => false,
         }
     }
 
@@ -54,7 +143,15 @@ impl DataType {
 
 impl std::fmt::Display for DataType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            DataType::Enum { name, .. } => write!(f, "Enum({})", name),
+            DataType::Structure { name, .. } => write!(f, "Structure({})", name),
+            DataType::Array { element_type } => write!(f, "Array({:?})", element_type),
+            DataType::Array2D {
+                element_type, dims, ..
+            } => write!(f, "Array2D({:?}{}x{})", element_type, dims[0], dims[1]),
+            _ => write!(f, "{:?}", self),
+        }
     }
 }
 
@@ -180,6 +277,9 @@ pub struct ServerConfig {
     /// Per-node history ring buffer capacity. 0 disables history recording.
     #[serde(default = "default_history_buffer_size")]
     pub history_buffer_size: usize,
+    /// Event history ring buffer capacity (per-source). 0 disables event recording.
+    #[serde(default = "default_event_history_size")]
+    pub event_history_size: usize,
 }
 
 impl Default for ServerConfig {
@@ -195,12 +295,17 @@ impl Default for ServerConfig {
             max_sessions: 100,
             max_subscriptions_per_session: 50,
             history_buffer_size: default_history_buffer_size(),
+            event_history_size: default_event_history_size(),
         }
     }
 }
 
 fn default_history_buffer_size() -> usize {
     10_000
+}
+
+fn default_event_history_size() -> usize {
+    1_000
 }
 
 /// Server lifecycle state.

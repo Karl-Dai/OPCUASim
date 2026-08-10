@@ -3,9 +3,9 @@ use std::sync::Arc;
 use log::info;
 use opcua_client::Session;
 use opcua_types::{
-    AttributeId, BrowseDescription, BrowseDirection, ByteString, DataValue, NodeClass, NodeId,
-    NumericRange, ReadValueId, ReferenceTypeId, StatusCode, TimestampsToReturn, UAString, Variant,
-    WriteValue,
+    Array, AttributeId, BrowseDescription, BrowseDirection, ByteString, DataValue, NodeClass,
+    NodeId, NumericRange, ReadValueId, ReferenceTypeId, StatusCode, TimestampsToReturn, UAString,
+    Variant, VariantScalarTypeId, WriteValue,
 };
 
 use crate::error::OpcUaSimError;
@@ -202,7 +202,7 @@ pub async fn read_node_attributes(
     let value_dv = values.get(3);
     let value = value_dv
         .and_then(|dv| dv.value.as_ref())
-        .map(|v| format!("{}", v));
+        .map(|v| crate::server::address_space::variant_to_display_string(v));
 
     let quality = value_dv
         .and_then(|dv| dv.status.as_ref())
@@ -238,6 +238,16 @@ fn string_to_variant(value: &str, data_type: &str) -> Result<Variant, OpcUaSimEr
             value, data_type, msg
         ))
     };
+
+    if data_type != "String" && (value.contains(';') || value.contains(',')) {
+        return parse_array_heuristic(value, data_type).map_err(|e| {
+            OpcUaSimError::WriteError(format!(
+                "Cannot convert '{}' to {}: {}",
+                value, data_type, e
+            ))
+        });
+    }
+
     match data_type {
         "Boolean" => match value.eq_ignore_ascii_case("true") || value == "1" {
             true => Ok(Variant::Boolean(true)),
@@ -285,6 +295,81 @@ fn string_to_variant(value: &str, data_type: &str) -> Result<Variant, OpcUaSimEr
             "Unsupported data type for write: {}",
             data_type
         ))),
+    }
+}
+
+fn element_scalar_id(data_type: &str) -> VariantScalarTypeId {
+    match data_type {
+        "Boolean" => VariantScalarTypeId::Boolean,
+        "SByte" => VariantScalarTypeId::SByte,
+        "Byte" => VariantScalarTypeId::Byte,
+        "Int16" => VariantScalarTypeId::Int16,
+        "UInt16" => VariantScalarTypeId::UInt16,
+        "Int32" => VariantScalarTypeId::Int32,
+        "UInt32" => VariantScalarTypeId::UInt32,
+        "Int64" => VariantScalarTypeId::Int64,
+        "UInt64" => VariantScalarTypeId::UInt64,
+        "Float" => VariantScalarTypeId::Float,
+        "String" => VariantScalarTypeId::String,
+        "Double" | _ => VariantScalarTypeId::Double,
+    }
+}
+
+fn parse_scalar_element(s: &str, scalar: VariantScalarTypeId) -> Option<Variant> {
+    let s = s.trim();
+    match scalar {
+        VariantScalarTypeId::Boolean => match s {
+            "true" | "1" => Some(Variant::Boolean(true)),
+            "false" | "0" => Some(Variant::Boolean(false)),
+            _ => None,
+        },
+        VariantScalarTypeId::SByte => s.parse::<i8>().ok().map(Variant::SByte),
+        VariantScalarTypeId::Byte => s.parse::<u8>().ok().map(Variant::Byte),
+        VariantScalarTypeId::Int16 => s.parse::<i16>().ok().map(Variant::Int16),
+        VariantScalarTypeId::UInt16 => s.parse::<u16>().ok().map(Variant::UInt16),
+        VariantScalarTypeId::Int32 => s.parse::<i32>().ok().map(Variant::Int32),
+        VariantScalarTypeId::UInt32 => s.parse::<u32>().ok().map(Variant::UInt32),
+        VariantScalarTypeId::Int64 => s.parse::<i64>().ok().map(Variant::Int64),
+        VariantScalarTypeId::UInt64 => s.parse::<u64>().ok().map(Variant::UInt64),
+        VariantScalarTypeId::Float => s.parse::<f32>().ok().map(Variant::Float),
+        VariantScalarTypeId::Double => s.parse::<f64>().ok().map(Variant::Double),
+        VariantScalarTypeId::String => Some(Variant::String(UAString::from(s))),
+        _ => s.parse::<f64>().ok().map(Variant::Double),
+    }
+}
+
+fn parse_array_heuristic(value: &str, data_type: &str) -> Result<Variant, String> {
+    let scalar = element_scalar_id(data_type);
+    if value.contains(';') {
+        let rows: Vec<&str> = value.split(';').collect();
+        let mut values: Vec<Variant> = Vec::new();
+        let mut cols = 0usize;
+        for (ri, row) in rows.iter().enumerate() {
+            let elements: Vec<&str> = row.split(',').collect();
+            if ri == 0 {
+                cols = elements.len();
+            }
+            for elem in elements {
+                let v = parse_scalar_element(elem, scalar)
+                    .ok_or_else(|| format!("cannot parse '{}' as {:?}", elem.trim(), scalar))?;
+                values.push(v);
+            }
+        }
+        let dims = vec![rows.len() as u32, cols as u32];
+        Array::new_multi(scalar, values, dims)
+            .map(|arr| Variant::Array(Box::new(arr)))
+            .map_err(|e| format!("Array::new_multi failed: {e:?}"))
+    } else {
+        let elements: Vec<&str> = value.split(',').collect();
+        let mut values: Vec<Variant> = Vec::with_capacity(elements.len());
+        for elem in elements {
+            let v = parse_scalar_element(elem, scalar)
+                .ok_or_else(|| format!("cannot parse '{}' as {:?}", elem.trim(), scalar))?;
+            values.push(v);
+        }
+        Array::new(scalar, values)
+            .map(|arr| Variant::Array(Box::new(arr)))
+            .map_err(|e| format!("Array::new failed: {e:?}"))
     }
 }
 

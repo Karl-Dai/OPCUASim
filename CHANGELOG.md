@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Server: events/alarms (threshold, method-triggered, heartbeat, connection-state) with event history read
+- Server: complex data types (arrays, 2D arrays, enums, nested structures)
+- Master: event subscription panel
 - Editable EU Range (low/high) for server variables in the property editor
 - Server: in-memory history buffer with HistoryRead support (simulated and externally written values, paged continuation points)
 - Server: preset demo methods (Echo / Add / RandomValue / SetNodeValue) callable from any client

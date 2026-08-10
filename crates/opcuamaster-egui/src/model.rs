@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 
-use crate::events::{BrowseItem, ConnectionInfo, LogRow, MonitoredRow, NodeAttrsDto, NodeGroupDto};
+use crate::events::{
+    BrowseItem, ConnectionInfo, EventItemDto, LogRow, MonitoredRow, NodeAttrsDto, NodeGroupDto,
+};
 use crate::widgets::connection_dialog::ConnDialogState;
 
 pub struct AppModel {
@@ -19,6 +21,7 @@ pub struct AppModel {
     pub next_req_id: u64,
     pub central_tab: CentralPanelTab,
     pub history_tabs: Vec<HistoryTabState>,
+    pub events: EventsPanelState,
 }
 
 impl Default for AppModel {
@@ -37,6 +40,7 @@ impl Default for AppModel {
             next_req_id: 0,
             central_tab: CentralPanelTab::DataTable,
             history_tabs: Vec::new(),
+            events: EventsPanelState::default(),
         }
     }
 }
@@ -45,6 +49,7 @@ impl Default for AppModel {
 pub enum CentralPanelTab {
     DataTable,
     History(usize),
+    EventsPanel,
 }
 
 pub struct HistoryTabState {
@@ -97,6 +102,15 @@ impl HistoryTabState {
         }
         self.points = points;
     }
+}
+
+#[derive(Default)]
+pub struct EventsPanelState {
+    pub selected_conn: Option<String>,
+    pub source_node_id: String,
+    pub items: Vec<EventItemDto>,
+    pub subscribed: bool,
+    pub pending_subscribe_req: Option<u64>,
 }
 
 impl Default for LogState {

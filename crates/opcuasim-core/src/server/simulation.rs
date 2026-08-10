@@ -10,7 +10,7 @@ use opcua_server::node_manager::memory::{InMemoryNodeManager, InMemoryNodeManage
 use opcua_server::SubscriptionCache;
 use opcua_types::{DataValue, DateTime, NodeId, NumericRange};
 
-use super::address_space::f64_to_variant;
+use super::address_space::{f64_to_variant, variant_to_display_string};
 use super::generator::generate_value;
 use super::history_store::HistoryStore;
 use super::models::{DataType, ServerNode, SimulationMode};
@@ -19,10 +19,13 @@ use super::models::{DataType, ServerNode, SimulationMode};
 #[derive(Clone)]
 struct NodeSimState {
     node_id_str: String,
+    display_name: String,
     opcua_node_id: NodeId,
     data_type: DataType,
     simulation: SimulationMode,
     iteration: u64,
+    eu_range_low: f64,
+    eu_range_high: f64,
 }
 
 /// The simulation engine drives value generation for all non-Static nodes.
@@ -31,9 +34,11 @@ pub struct SimulationEngine {
     cancel_token: CancellationToken,
     node_states: Arc<RwLock<HashMap<String, NodeSimState>>>,
     update_seq: Arc<RwLock<u64>>,
-    /// Map of node_id -> current_value for incremental polling from frontend.
     current_values: Arc<RwLock<HashMap<String, (String, u64)>>>,
     history_store: Arc<RwLock<Option<Arc<HistoryStore>>>>,
+    alarm_states: Arc<RwLock<HashMap<String, bool>>>,
+    event_notifier: Arc<RwLock<Option<Arc<dyn Fn(&str, u16) + Send + Sync>>>>,
+    custom_types: Arc<RwLock<HashMap<String, NodeId>>>,
 }
 
 impl SimulationEngine {
@@ -44,12 +49,23 @@ impl SimulationEngine {
             update_seq: Arc::new(RwLock::new(0)),
             current_values: Arc::new(RwLock::new(HashMap::new())),
             history_store: Arc::new(RwLock::new(None)),
+            alarm_states: Arc::new(RwLock::new(HashMap::new())),
+            event_notifier: Arc::new(RwLock::new(None)),
+            custom_types: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Attach the history store; simulation updates will be recorded there.
     pub async fn set_history_store(&self, store: Arc<HistoryStore>) {
         *self.history_store.write().await = Some(store);
+    }
+
+    pub async fn set_event_notifier(&self, notifier: Arc<dyn Fn(&str, u16) + Send + Sync>) {
+        *self.event_notifier.write().await = Some(notifier);
+    }
+
+    pub async fn set_custom_types(&self, custom: HashMap<String, NodeId>) {
+        *self.custom_types.write().await = custom;
     }
 
     /// Register nodes for simulation. Must be called before start().
@@ -65,10 +81,13 @@ impl SimulationEngine {
                 node.node_id.clone(),
                 NodeSimState {
                     node_id_str: node.node_id.clone(),
+                    display_name: node.display_name.clone(),
                     data_type: node.data_type.clone(),
                     simulation: node.simulation.clone(),
                     opcua_node_id,
                     iteration: 0,
+                    eu_range_low: node.eu_range_low,
+                    eu_range_high: node.eu_range_high,
                 },
             );
         }
@@ -87,6 +106,9 @@ impl SimulationEngine {
         let update_seq = self.update_seq.clone();
         let current_values = self.current_values.clone();
         let history_store = self.history_store.clone();
+        let alarm_states = self.alarm_states.clone();
+        let event_notifier = self.event_notifier.clone();
+        let custom_types = self.custom_types.clone();
 
         tokio::spawn(async move {
             // Group nodes by interval
@@ -114,6 +136,9 @@ impl SimulationEngine {
                 let seq = update_seq.clone();
                 let vals = current_values.clone();
                 let hs = history_store.clone();
+                let as_ = alarm_states.clone();
+                let en = event_notifier.clone();
+                let ct = custom_types.clone();
 
                 let handle = tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
@@ -125,10 +150,11 @@ impl SimulationEngine {
                             _ = interval.tick() => {
                                 let elapsed = start_time.elapsed().as_secs_f64();
                                 let now = DateTime::now();
+                                let custom = ct.read().await.clone();
 
-                                // Generate values for all nodes in this group
                                 let mut updates: Vec<(&NodeId, Option<&NumericRange>, DataValue)> = Vec::new();
                                 let mut value_strings: Vec<(String, String)> = Vec::new();
+                                let mut alarm_events: Vec<(String, String, u16)> = Vec::new();
 
                                 for node_state in &mut group_nodes {
                                     if let Some(raw_value) = generate_value(
@@ -136,8 +162,8 @@ impl SimulationEngine {
                                         elapsed,
                                         node_state.iteration,
                                     ) {
-                                        let variant = f64_to_variant(raw_value, &node_state.data_type);
-                                        let value_str = format!("{}", variant);
+                                        let variant = f64_to_variant(raw_value, &node_state.data_type, &custom);
+                                        let value_str = variant_to_display_string(&variant);
                                         value_strings.push((node_state.node_id_str.clone(), value_str));
 
                                         let mut dv = DataValue::new_now(variant);
@@ -151,12 +177,68 @@ impl SimulationEngine {
                                             store.record(&node_state.opcua_node_id, dv.clone()).await;
                                         }
 
+                                        // Threshold alarm detection (numeric nodes only).
+                                        if node_state.data_type.is_numeric() {
+                                            let is_out =
+                                                raw_value < node_state.eu_range_low
+                                                    || raw_value > node_state.eu_range_high;
+                                            let was_active = {
+                                                let guard = as_.read().await;
+                                                *guard.get(&node_state.node_id_str).unwrap_or(&false)
+                                            };
+                                            match (is_out, was_active) {
+                                                (true, false) => {
+                                                    let msg = format!(
+                                                        "{} exceeded limit ({}..{})",
+                                                        node_state.display_name,
+                                                        node_state.eu_range_low,
+                                                        node_state.eu_range_high,
+                                                    );
+                                                    alarm_events.push((
+                                                        node_state.node_id_str.clone(),
+                                                        msg,
+                                                        500,
+                                                    ));
+                                                    as_.write()
+                                                        .await
+                                                        .insert(node_state.node_id_str.clone(), true);
+                                                }
+                                                (false, true) => {
+                                                    let msg = format!(
+                                                        "{} back to normal",
+                                                        node_state.display_name,
+                                                    );
+                                                    alarm_events.push((
+                                                        node_state.node_id_str.clone(),
+                                                        msg,
+                                                        100,
+                                                    ));
+                                                    as_.write()
+                                                        .await
+                                                        .insert(node_state.node_id_str.clone(), false);
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+
                                         updates.push((
                                             &node_state.opcua_node_id,
                                             None,
                                             dv,
                                         ));
                                         node_state.iteration += 1;
+                                    }
+                                }
+
+                                // Emit alarm events (after dropping all per-node locks).
+                                if !alarm_events.is_empty() {
+                                    if let Some(notifier) = {
+                                        let guard = en.read().await;
+                                        guard.clone()
+                                    } {
+                                        for (_nid, msg, severity) in &alarm_events {
+                                            notifier(msg.as_str(), *severity);
+                                        }
                                     }
                                 }
 

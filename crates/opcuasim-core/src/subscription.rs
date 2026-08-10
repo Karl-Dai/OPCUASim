@@ -4,14 +4,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-use opcua_client::{DataChangeCallback, Session};
+use opcua_client::{DataChangeCallback, EventCallback, Session};
 use opcua_types::{
-    AttributeId, DataChangeFilter, DataChangeTrigger, ExtensionObject, MonitoredItemCreateRequest,
-    MonitoringMode, MonitoringParameters, NodeId, NumericRange, QualifiedName, ReadValueId,
-    TimestampsToReturn,
+    AttributeId, ContentFilter, DataChangeFilter, DataChangeTrigger, EventFilter, ExtensionObject,
+    MonitoredItemCreateRequest, MonitoringMode, MonitoringParameters, NodeId, NumericRange,
+    ObjectTypeId, QualifiedName, ReadValueId, SimpleAttributeOperand, TimestampsToReturn,
 };
 
 use crate::error::OpcUaSimError;
+use crate::events::{EventItem, EventLog};
 use crate::node::{DataChangeFilterCfg, DataChangeTriggerKind, DeadbandKind, MonitoredNode};
 use crate::output::DataChangeItem;
 
@@ -20,6 +21,8 @@ pub struct SubscriptionManager {
     monitored_items: Arc<RwLock<HashMap<String, MonitoredNode>>>,
     update_seq: Arc<RwLock<u64>>,
     subscription_id: Arc<RwLock<Option<u32>>>,
+    event_subscription_id: Arc<RwLock<Option<u32>>>,
+    event_log: Arc<RwLock<Option<Arc<EventLog>>>>,
 }
 
 impl SubscriptionManager {
@@ -28,6 +31,170 @@ impl SubscriptionManager {
             monitored_items: Arc::new(RwLock::new(HashMap::new())),
             update_seq: Arc::new(RwLock::new(0)),
             subscription_id: Arc::new(RwLock::new(None)),
+            event_subscription_id: Arc::new(RwLock::new(None)),
+            event_log: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    pub async fn get_event_log(&self) -> Option<Arc<EventLog>> {
+        self.event_log.read().await.clone()
+    }
+
+    pub async fn subscribe_to_events(
+        &self,
+        session: &Arc<Session>,
+        source_id: &NodeId,
+    ) -> Result<(), OpcUaSimError> {
+        {
+            let sub = self.event_subscription_id.read().await;
+            if sub.is_some() {
+                return Err(OpcUaSimError::SubscriptionError(
+                    "Event subscription already active".into(),
+                ));
+            }
+        }
+
+        let event_log = Arc::new(EventLog::new(500));
+        let log_for_cb = event_log.clone_shared();
+
+        let base_event_type_id: NodeId = ObjectTypeId::BaseEventType.into();
+        let select_clauses = vec![
+            make_select_clause(&base_event_type_id, "Time"),
+            make_select_clause(&base_event_type_id, "Severity"),
+            make_select_clause(&base_event_type_id, "SourceNode"),
+            make_select_clause(&base_event_type_id, "SourceName"),
+            make_select_clause(&base_event_type_id, "Message"),
+            make_select_clause(&base_event_type_id, "EventId"),
+            make_select_clause(&base_event_type_id, "EventType"),
+        ];
+
+        let callback = EventCallback::new(move |event_fields, _item| {
+            let fields = match event_fields {
+                Some(f) => f,
+                None => return,
+            };
+            if fields.len() < 7 {
+                return;
+            }
+            let time = variant_to_string(&fields[0]);
+            let severity = variant_to_u16(&fields[1]);
+            let source = variant_to_string(&fields[2]) + ":" + &variant_to_string(&fields[3]);
+            let message = variant_to_string(&fields[4]);
+            let event_type = variant_to_string(&fields[6]);
+            let item = EventItem {
+                time,
+                severity,
+                source,
+                message,
+                event_type,
+            };
+            log_for_cb.add_sync(item);
+        });
+
+        let sub_id = session
+            .create_subscription(Duration::from_millis(500), 300, 10, 0, 0, true, callback)
+            .await
+            .map_err(|e| {
+                OpcUaSimError::SubscriptionError(format!("Create event subscription failed: {}", e))
+            })?;
+
+        let event_filter = EventFilter {
+            select_clauses: Some(select_clauses),
+            where_clause: ContentFilter::default(),
+        };
+        let filter_obj = ExtensionObject::from_message(event_filter);
+        let create_req = MonitoredItemCreateRequest {
+            item_to_monitor: ReadValueId {
+                node_id: source_id.clone(),
+                attribute_id: AttributeId::EventNotifier as u32,
+                index_range: NumericRange::None,
+                data_encoding: QualifiedName::null(),
+            },
+            monitoring_mode: MonitoringMode::Reporting,
+            requested_parameters: MonitoringParameters {
+                client_handle: 0,
+                sampling_interval: 0.0,
+                filter: filter_obj,
+                queue_size: 10,
+                discard_oldest: true,
+            },
+        };
+
+        session
+            .create_monitored_items(sub_id, TimestampsToReturn::Both, vec![create_req])
+            .await
+            .map_err(|e| {
+                OpcUaSimError::SubscriptionError(format!(
+                    "Create event monitored item failed: {}",
+                    e
+                ))
+            })?;
+
+        {
+            let mut sub_slot = self.event_subscription_id.write().await;
+            *sub_slot = Some(sub_id);
+        }
+        {
+            let mut log_slot = self.event_log.write().await;
+            *log_slot = Some(event_log);
+        }
+        info!("Event subscription created: sub_id={}", sub_id);
+        Ok(())
+    }
+
+    pub async fn unsubscribe_events(
+        &self,
+        session: Option<&Arc<Session>>,
+    ) -> Result<(), OpcUaSimError> {
+        let sub_id = {
+            let mut sub_slot = self.event_subscription_id.write().await;
+            sub_slot.take()
+        };
+        if let Some(id) = sub_id {
+            if let Some(s) = session {
+                if let Err(e) = s.delete_subscription(id).await {
+                    info!(
+                        "delete event subscription {} failed (session may be gone): {}",
+                        id, e
+                    );
+                }
+            }
+            let mut log_slot = self.event_log.write().await;
+            *log_slot = None;
+        }
+        Ok(())
+    }
+
+    /// Reset subscription slot state after `Session::disconnect()` has
+    /// already deleted the server-side subscriptions — prevents
+    /// stale-id early returns on reconnect.
+    pub async fn on_disconnect(&self) {
+        {
+            let mut sid = self.subscription_id.write().await;
+            *sid = None;
+        }
+        {
+            let mut eid = self.event_subscription_id.write().await;
+            *eid = None;
+        }
+        {
+            let mut log_slot = self.event_log.write().await;
+            *log_slot = None;
+        }
+    }
+
+    pub async fn get_events(&self) -> Vec<EventItem> {
+        self.event_log
+            .read()
+            .await
+            .as_ref()
+            .map(|l| l.items_sync())
+            .unwrap_or_default()
+    }
+
+    pub async fn clear_events(&self) {
+        if let Some(log) = self.event_log.read().await.as_ref() {
+            log.clear_sync();
         }
     }
 
@@ -151,7 +318,7 @@ impl SubscriptionManager {
             let value_str = data_value
                 .value
                 .as_ref()
-                .map(|v| format!("{}", v))
+                .map(|v| crate::server::address_space::variant_to_display_string(v))
                 .unwrap_or_else(|| "null".to_string());
             let data_type_str = data_value.value.as_ref().map(|v| match v.type_id() {
                 opcua_types::variant::VariantTypeId::Empty => "Empty".to_string(),
@@ -261,7 +428,7 @@ impl SubscriptionManager {
 
                         let value = val_dv
                             .and_then(|dv| dv.value.as_ref())
-                            .map(|v| format!("{}", v));
+                            .map(|v| crate::server::address_space::variant_to_display_string(v));
                         let quality = val_dv
                             .and_then(|dv| dv.status.as_ref())
                             .map(|s| format!("{}", s));
@@ -417,6 +584,38 @@ fn resolve_data_type(node_id_str: &str) -> String {
 impl Default for SubscriptionManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn make_select_clause(type_def_id: &NodeId, field_name: &str) -> SimpleAttributeOperand {
+    SimpleAttributeOperand {
+        type_definition_id: type_def_id.clone(),
+        browse_path: Some(vec![QualifiedName::from(field_name)]),
+        attribute_id: AttributeId::Value as u32,
+        index_range: NumericRange::None,
+    }
+}
+
+fn variant_to_string(v: &opcua_types::Variant) -> String {
+    match v {
+        opcua_types::Variant::String(s) => s.to_string(),
+        opcua_types::Variant::LocalizedText(lt) => lt.text.to_string(),
+        opcua_types::Variant::NodeId(n) => format!("{}", n),
+        opcua_types::Variant::ByteString(b) => format!("{:?}", b),
+        opcua_types::Variant::DateTime(dt) => format!("{}", dt),
+        opcua_types::Variant::Empty => String::new(),
+        other => format!("{}", other),
+    }
+}
+
+fn variant_to_u16(v: &opcua_types::Variant) -> u16 {
+    match v {
+        opcua_types::Variant::UInt16(u) => *u,
+        opcua_types::Variant::UInt32(u) => (*u).min(u16::MAX as u32) as u16,
+        opcua_types::Variant::Int16(i) => (*i).max(0) as u16,
+        opcua_types::Variant::Int32(i) => (*i).clamp(0, u16::MAX as i32) as u16,
+        opcua_types::Variant::Byte(b) => *b as u16,
+        _ => 0,
     }
 }
 

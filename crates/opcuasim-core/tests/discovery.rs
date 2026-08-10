@@ -24,6 +24,7 @@ async fn lists_advertised_endpoints() {
         max_sessions: 10,
         max_subscriptions_per_session: 10,
         history_buffer_size: 10_000,
+        event_history_size: 1_000,
     };
     server.start(&config, &[], &[]).await.expect("server start");
     tokio::time::sleep(Duration::from_millis(800)).await;
