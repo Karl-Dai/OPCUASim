@@ -1,16 +1,20 @@
 //! Events: DemoEvents source object, event notification and RaiseEvent method.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use log::info;
+use opcua_core::sync::RwLock;
 use opcua_nodes::{BaseEventType, EventNotifier, ObjectBuilder};
 use opcua_server::address_space::AddressSpace;
 use opcua_server::node_manager::memory::InMemoryNodeManager;
 use opcua_server::SubscriptionCache;
 use opcua_types::{
-    DataTypeId, DateTime, LocalizedText, NodeId, ObjectId, ObjectTypeId, StatusCode, UAString,
-    Variant,
+    AttributeId, DataEncoding, DataTypeId, DateTime, LocalizedText, NodeId, NumericRange, ObjectId,
+    ObjectTypeId, StatusCode, TimestampsToReturn, UAString, Variant, VariableId,
 };
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use super::event_store::EventStore;
 use super::history_node_manager::HistoryNodeManagerImpl;
@@ -128,4 +132,109 @@ pub fn register_raise_event_method(
             Ok(vec![])
         },
     )
+}
+
+/// Spawn a background task that emits a heartbeat event at the specified
+/// interval with an incrementing sequence number. The task exits when
+/// `cancel` is triggered.
+pub fn spawn_heartbeat_task(
+    subscriptions: Arc<SubscriptionCache>,
+    event_store: Option<Arc<EventStore>>,
+    source: NodeId,
+    interval: Duration,
+    cancel: CancellationToken,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut seq: u64 = 0;
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = tokio::time::sleep(interval) => {
+                    let message = format!("Heartbeat {}", seq);
+                    notify_event(&subscriptions, &event_store, &source, &message, 100);
+                    seq += 1;
+                }
+            }
+        }
+        info!("Heartbeat task stopped");
+    })
+}
+
+/// Spawn a background task that polls the server's current session count
+/// at the specified interval and emits an event when the count changes.
+///
+/// Reads `CurrentSessionCount` from the standard OPC UA address space
+/// (`VariableId::Server_ServerDiagnostics_ServerDiagnosticsSummary_CurrentSessionCount`).
+/// If the node cannot be located or the value cannot be extracted the
+/// iteration is silently skipped.
+pub fn spawn_connection_monitor_task(
+    subscriptions: Arc<SubscriptionCache>,
+    event_store: Option<Arc<EventStore>>,
+    source: NodeId,
+    address_space: Arc<RwLock<AddressSpace>>,
+    interval: Duration,
+    cancel: CancellationToken,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let session_node_id: NodeId =
+            VariableId::Server_ServerDiagnostics_ServerDiagnosticsSummary_CurrentSessionCount
+                .into();
+        let mut last_count: Option<i32> = None;
+
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = tokio::time::sleep(interval) => {
+                    // Read session count from address space (synchronous lock,
+                    // brief and cheap — no async work while holding the guard).
+                    let current: Option<i32> = {
+                        let space = address_space.read();
+                        space
+                            .find_node(&session_node_id)
+                            .and_then(|node| {
+                                node.as_node().get_attribute(
+                                    TimestampsToReturn::Neither,
+                                    AttributeId::Value,
+                                    &NumericRange::None,
+                                    &DataEncoding::default(),
+                                )
+                            })
+                            .and_then(|dv| dv.value)
+                            .and_then(variant_to_i32)
+                    };
+
+                    if let Some(count) = current {
+                        match last_count {
+                            None => {
+                                // First observation — record baseline; no event.
+                                last_count = Some(count);
+                            }
+                            Some(prev) if prev == count => { /* unchanged */ }
+                            Some(prev) => {
+                                let (message, severity) = if count > prev {
+                                    (format!("Client connected ({} sessions)", count), 200u16)
+                                } else {
+                                    (format!("Client disconnected ({} sessions)", count), 300u16)
+                                };
+                                notify_event(&subscriptions, &event_store, &source, &message, severity);
+                                last_count = Some(count);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        info!("Connection monitor task stopped");
+    })
+}
+
+fn variant_to_i32(v: Variant) -> Option<i32> {
+    match v {
+        Variant::Int32(n) => Some(n),
+        Variant::UInt32(n) => n.try_into().ok(),
+        Variant::Int16(n) => Some(i32::from(n)),
+        Variant::UInt16(n) => Some(i32::from(n)),
+        Variant::Byte(n) => Some(i32::from(n)),
+        _ => None,
+    }
 }

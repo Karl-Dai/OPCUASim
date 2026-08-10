@@ -1,7 +1,9 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use log::info;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 
 use opcua_crypto::SecurityPolicy;
 use opcua_server::address_space::AddressSpace;
@@ -37,6 +39,8 @@ pub struct OpcUaServer {
     simulation_engine: Arc<RwLock<Option<Arc<SimulationEngine>>>>,
     namespace_index: Arc<RwLock<u16>>,
     event_store: Arc<RwLock<Option<Arc<EventStore>>>>,
+    heartbeat_task: Arc<RwLock<Option<JoinHandle<()>>>>,
+    connection_monitor_task: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
 
 /// Result of building the server (all sync, no async).
@@ -201,6 +205,8 @@ impl OpcUaServer {
             simulation_engine: Arc::new(RwLock::new(None)),
             namespace_index: Arc::new(RwLock::new(2)),
             event_store: Arc::new(RwLock::new(None)),
+            heartbeat_task: Arc::new(RwLock::new(None)),
+            connection_monitor_task: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -261,19 +267,46 @@ impl OpcUaServer {
             ns_index,
             subscriptions.clone(),
             Some(event_store.clone()),
-            events_source,
+            events_source.clone(),
         );
 
         // Start simulation engine
         let sim_engine = Arc::new(SimulationEngine::new());
         sim_engine.register_nodes(nodes, ns_index).await;
         sim_engine.set_history_store(history.clone()).await;
-        sim_engine.start(sim_nm, subscriptions.clone());
+        sim_engine.start(sim_nm.clone(), subscriptions.clone());
         *self.simulation_engine.write().await = Some(sim_engine.clone());
 
         // Register preset demo methods
-        if let Err(e) = super::methods::register_demo_methods(self, subscriptions).await {
+        if let Err(e) = super::methods::register_demo_methods(self, subscriptions.clone()).await {
             log::warn!("Failed to register preset demo methods: {e}");
+        }
+
+        // Spawn heartbeat and connection monitor tasks
+        {
+            let handle_guard = self.handle.read().await;
+            let server_handle = handle_guard.as_ref().expect("handle set above");
+            let cancel = server_handle.token().clone();
+            let address_space = sim_nm.address_space().clone();
+
+            let heartbeat = super::events::spawn_heartbeat_task(
+                subscriptions.clone(),
+                Some(event_store.clone()),
+                events_source.clone(),
+                Duration::from_secs(5),
+                cancel.clone(),
+            );
+            *self.heartbeat_task.write().await = Some(heartbeat);
+
+            let conn_mon = super::events::spawn_connection_monitor_task(
+                subscriptions.clone(),
+                Some(event_store.clone()),
+                events_source.clone(),
+                address_space,
+                Duration::from_secs(1),
+                cancel,
+            );
+            *self.connection_monitor_task.write().await = Some(conn_mon);
         }
 
         // Run server in background task
@@ -308,6 +341,16 @@ impl OpcUaServer {
             *self.state.write().await = ServerState::Stopping;
             info!("Stopping OPC UA server");
             h.cancel();
+
+            // Abort background event tasks (cancel token already triggered
+            // above; abort as a belt-and-braces guarantee).
+            if let Some(hb) = self.heartbeat_task.write().await.take() {
+                hb.abort();
+            }
+            if let Some(cm) = self.connection_monitor_task.write().await.take() {
+                cm.abort();
+            }
+
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             Ok(())
         } else {
