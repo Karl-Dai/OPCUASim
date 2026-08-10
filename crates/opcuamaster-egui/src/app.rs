@@ -216,10 +216,29 @@ impl MasterApp {
             BackendEvent::EventItems {
                 conn_id,
                 items,
-                full,
             } => {
                 if self.model.events.selected_conn.as_deref() == Some(&conn_id) {
-                    events_panel::apply_event_items(&mut self.model.events, items, full);
+                    events_panel::apply_event_items(&mut self.model.events, items);
+                }
+            }
+            BackendEvent::EventSubscribeResult {
+                conn_id,
+                req_id,
+                ok,
+                detail,
+            } => {
+                let is_our_conn = self.model.events.selected_conn.as_deref() == Some(&conn_id);
+                if is_our_conn {
+                    events_panel::apply_subscribe_result(&mut self.model.events, req_id, ok);
+                }
+                if !ok {
+                    let msg = detail.clone().unwrap_or_else(|| "事件订阅失败".into());
+                    self.model.push_toast(crate::events::ToastLevel::Error, msg);
+                } else {
+                    self.model.push_toast(
+                        crate::events::ToastLevel::Info,
+                        "事件订阅已建立".to_string(),
+                    );
                 }
             }
             BackendEvent::CertificateList {

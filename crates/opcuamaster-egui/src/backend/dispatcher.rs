@@ -258,10 +258,13 @@ async fn handle_cmd(
             )
             .await
         }
-        UiCommand::SubscribeEvents {
+        UiCommand::SubscribeEventInFlight {
             conn_id,
+            req_id,
             source_node_id,
-        } => do_subscribe_events(conn_id, source_node_id, &state, &event_tx).await,
+        } => {
+            do_subscribe_events(conn_id, req_id, source_node_id, &state, &event_tx).await
+        }
         UiCommand::UnsubscribeEvents { conn_id } => {
             do_unsubscribe_events(conn_id, &state, &event_tx).await
         }
@@ -401,6 +404,10 @@ async fn connect(
             let cb_state = state.clone();
             let cb_conn = id.clone();
             let cb_tx = event_tx.clone();
+            let cb_sub_mgr = {
+                let conns = state.connections.read().map_err(|e| e.to_string())?;
+                conns.get(&id).ok_or("Connection not found")?.subscription_mgr.clone()
+            };
             let on_state_change = move |s: ConnectionState| {
                 if s == ConnectionState::Connected {
                     let st = cb_state.clone();
@@ -408,6 +415,11 @@ async fn connect(
                     let tx = cb_tx.clone();
                     tokio::spawn(async move {
                         restore_monitoring(&cid, &st, &tx).await;
+                    });
+                } else if s == ConnectionState::Reconnecting {
+                    let mgr = cb_sub_mgr.clone();
+                    tokio::spawn(async move {
+                        mgr.on_disconnect().await;
                     });
                 }
             };
@@ -446,6 +458,11 @@ async fn disconnect(
 
     let _ = conn_arc.disconnect().await;
     *conn_arc.state.write().await = ConnectionState::Disconnected;
+    let sub_mgr = {
+        let conns = state.connections.read().map_err(|e| e.to_string())?;
+        conns.get(&id).ok_or("Connection not found")?.subscription_mgr.clone()
+    };
+    sub_mgr.on_disconnect().await;
     let _ = event_tx.send(BackendEvent::ConnectionStateChanged {
         id: id.clone(),
         state: "Disconnected".to_string(),
@@ -1474,11 +1491,9 @@ async fn event_timer(
                             event_type: e.event_type,
                         })
                         .collect();
-                    let full = last == 0;
                     let _ = event_tx.send(BackendEvent::EventItems {
                         conn_id: conn_id.clone(),
                         items,
-                        full,
                     });
                     {
                         let mut map = last_len.lock().await;
@@ -1496,6 +1511,7 @@ async fn event_timer(
 
 async fn do_subscribe_events(
     conn_id: String,
+    req_id: u64,
     source_node_id: String,
     state: &Arc<BackendState>,
     event_tx: &UnboundedSender<BackendEvent>,
@@ -1509,21 +1525,33 @@ async fn do_subscribe_events(
         )
     };
 
-    let nid: opcua_types::NodeId = source_node_id
-        .parse()
-        .map_err(|_| format!("invalid source node id: {source_node_id}"))?;
+    let subscribe_result = async {
+        let nid: opcua_types::NodeId = source_node_id
+            .parse()
+            .map_err(|_| format!("invalid source node id: {source_node_id}"))?;
 
-    let session_guard = session_holder.read().await;
-    let session = session_guard.as_ref().ok_or("Not connected — no active session")?;
-    sub_mgr
-        .subscribe_to_events(session, &nid)
-        .await
-        .map_err(|e| e.to_string())?;
-    drop(session_guard);
+        let session_guard = session_holder.read().await;
+        let session = session_guard
+            .as_ref()
+            .ok_or_else(|| "Not connected — no active session".to_string())?;
+        sub_mgr
+            .subscribe_to_events(session, &nid)
+            .await
+            .map_err(|e| e.to_string())?;
+        drop(session_guard);
+        Ok::<_, String>(())
+    }
+    .await;
 
-    let _ = event_tx.send(BackendEvent::Toast {
-        level: ToastLevel::Info,
-        message: "事件订阅已建立".into(),
+    let (ok, detail) = match subscribe_result {
+        Ok(()) => (true, None),
+        Err(e) => (false, Some(e.clone())),
+    };
+    let _ = event_tx.send(BackendEvent::EventSubscribeResult {
+        conn_id,
+        req_id,
+        ok,
+        detail,
     });
     Ok(())
 }
@@ -1533,12 +1561,23 @@ async fn do_unsubscribe_events(
     state: &Arc<BackendState>,
     event_tx: &UnboundedSender<BackendEvent>,
 ) -> Result<(), String> {
-    let sub_mgr = {
+    let (sub_mgr, session_holder) = {
         let conns = state.connections.read().map_err(|e| e.to_string())?;
         let entry = conns.get(&conn_id).ok_or("Connection not found")?;
-        entry.subscription_mgr.clone()
+        (
+            entry.subscription_mgr.clone(),
+            entry.connection.get_session_holder(),
+        )
     };
-    sub_mgr.unsubscribe_events().await.map_err(|e| e.to_string())?;
+
+    let session_guard = session_holder.read().await;
+    let session_ref = session_guard.as_ref();
+    sub_mgr
+        .unsubscribe_events(session_ref)
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(session_guard);
+
     let _ = event_tx.send(BackendEvent::Toast {
         level: ToastLevel::Info,
         message: "事件订阅已取消".into(),

@@ -94,8 +94,9 @@ pub enum UiCommand {
         max_values: u32,
         req_id: u64,
     },
-    SubscribeEvents {
+    SubscribeEventInFlight {
         conn_id: String,
+        req_id: u64,
         source_node_id: String,
     },
     UnsubscribeEvents {
@@ -238,7 +239,12 @@ pub enum BackendEvent {
     EventItems {
         conn_id: String,
         items: Vec<EventItemDto>,
-        full: bool,
+    },
+    EventSubscribeResult {
+        conn_id: String,
+        req_id: u64,
+        ok: bool,
+        detail: Option<String>,
     },
     Toast {
         level: ToastLevel,

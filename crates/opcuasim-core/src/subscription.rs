@@ -156,16 +156,45 @@ impl SubscriptionManager {
         Ok(())
     }
 
-    pub async fn unsubscribe_events(&self) -> Result<(), OpcUaSimError> {
+    pub async fn unsubscribe_events(
+        &self,
+        session: Option<&Arc<Session>>,
+    ) -> Result<(), OpcUaSimError> {
         let sub_id = {
             let mut sub_slot = self.event_subscription_id.write().await;
             sub_slot.take()
         };
-        if let Some(_id) = sub_id {
+        if let Some(id) = sub_id {
+            if let Some(s) = session {
+                if let Err(e) = s.delete_subscription(id).await {
+                    info!(
+                        "delete event subscription {} failed (session may be gone): {}",
+                        id, e
+                    );
+                }
+            }
             let mut log_slot = self.event_log.write().await;
             *log_slot = None;
         }
         Ok(())
+    }
+
+    /// Reset subscription slot state after `Session::disconnect()` has
+    /// already deleted the server-side subscriptions — prevents
+    /// stale-id early returns on reconnect.
+    pub async fn on_disconnect(&self) {
+        {
+            let mut sid = self.subscription_id.write().await;
+            *sid = None;
+        }
+        {
+            let mut eid = self.event_subscription_id.write().await;
+            *eid = None;
+        }
+        {
+            let mut log_slot = self.event_log.write().await;
+            *log_slot = None;
+        }
     }
 
     pub async fn get_events(&self) -> Vec<EventItem> {
@@ -596,10 +625,10 @@ fn variant_to_string(v: &opcua_types::Variant) -> String {
 fn variant_to_u16(v: &opcua_types::Variant) -> u16 {
     match v {
         opcua_types::Variant::UInt16(u) => *u,
-        opcua_types::Variant::UInt32(u) => *u as u16,
-        opcua_types::Variant::Int32(i) => *i as u16,
+        opcua_types::Variant::UInt32(u) => (*u).min(u16::MAX as u32) as u16,
+        opcua_types::Variant::Int16(i) => (*i).max(0) as u16,
+        opcua_types::Variant::Int32(i) => (*i).clamp(0, u16::MAX as i32) as u16,
         opcua_types::Variant::Byte(b) => *b as u16,
-        opcua_types::Variant::Int16(i) => *i as u16,
         _ => 0,
     }
 }

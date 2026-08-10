@@ -110,6 +110,7 @@ pub struct EventsPanelState {
     pub source_node_id: String,
     pub items: Vec<EventItemDto>,
     pub subscribed: bool,
+    pub pending_subscribe_req: Option<u64>,
 }
 
 impl Default for LogState {
