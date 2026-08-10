@@ -4,6 +4,7 @@ pub mod client;
 pub mod config; // ConnectionConfig, AuthConfig, ProjectFile (includes security config)
 pub mod discovery;
 pub mod error;
+pub mod events;
 pub mod history;
 pub mod log_collector;
 pub mod log_entry;
