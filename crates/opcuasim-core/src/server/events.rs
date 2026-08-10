@@ -11,7 +11,7 @@ use opcua_server::node_manager::memory::InMemoryNodeManager;
 use opcua_server::SubscriptionCache;
 use opcua_types::{
     AttributeId, DataEncoding, DataTypeId, DateTime, LocalizedText, NodeId, NumericRange, ObjectId,
-    ObjectTypeId, StatusCode, TimestampsToReturn, UAString, Variant, VariableId,
+    ObjectTypeId, StatusCode, TimestampsToReturn, UAString, VariableId, Variant,
 };
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -62,15 +62,10 @@ pub fn notify_event(
     let event_id = opcua_crypto::random::byte_string(6);
     let event_id_for_store = event_id.clone();
 
-    let event = BaseEventType::new(
-        ObjectTypeId::BaseEventType,
-        event_id,
-        message,
-        now,
-    )
-    .set_source_node(source.clone())
-    .set_source_name(UAString::from(DEMO_EVENTS_ID))
-    .set_severity(severity);
+    let event = BaseEventType::new(ObjectTypeId::BaseEventType, event_id, message, now)
+        .set_source_node(source.clone())
+        .set_source_name(UAString::from(DEMO_EVENTS_ID))
+        .set_severity(severity);
 
     // Live-notify listeners subscribed to events on this source (single-event push).
     subscriptions.notify_events(std::iter::once((&event as &dyn opcua_nodes::Event, source)));
@@ -128,7 +123,13 @@ pub fn register_raise_event_method(
                 Some(Variant::String(s)) => s.to_string(),
                 _ => return Err(StatusCode::BadInvalidArgument),
             };
-            notify_event(&subs_capture, &store_capture, &source_capture, &message, severity);
+            notify_event(
+                &subs_capture,
+                &store_capture,
+                &source_capture,
+                &message,
+                severity,
+            );
             Ok(vec![])
         },
     )

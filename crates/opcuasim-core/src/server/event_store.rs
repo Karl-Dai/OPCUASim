@@ -115,14 +115,8 @@ mod tests {
             .await;
         assert_eq!(vals.len(), 3);
         // Oldest two dropped; newest three kept, oldest-first
-        assert_eq!(
-            vals[0].1.first().map(|v| format!("{v}")),
-            Some("2".into())
-        );
-        assert_eq!(
-            vals[2].1.first().map(|v| format!("{v}")),
-            Some("4".into())
-        );
+        assert_eq!(vals[0].1.first().map(|v| format!("{v}")), Some("2".into()));
+        assert_eq!(vals[2].1.first().map(|v| format!("{v}")), Some("4".into()));
     }
 
     #[tokio::test]
@@ -170,9 +164,7 @@ mod tests {
     async fn zero_capacity_disables() {
         let store = EventStore::new(0);
         let id = NodeId::new(2, "A");
-        store
-            .record(&id, dt(1000), vec![Variant::Int64(1)])
-            .await;
+        store.record(&id, dt(1000), vec![Variant::Int64(1)]).await;
         assert_eq!(store.len(&id).await, 0);
         let (vals, _) = store
             .query(&id, DateTime::epoch(), DateTime::endtimes(), 10, 0)

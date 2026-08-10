@@ -18,10 +18,7 @@ use crate::error::OpcUaSimError;
 
 const DEFAULT_ARRAY_LEN: usize = 4;
 
-fn data_type_to_node_id(
-    dt: &DataType,
-    custom: &HashMap<String, NodeId>,
-) -> NodeId {
+fn data_type_to_node_id(dt: &DataType, custom: &HashMap<String, NodeId>) -> NodeId {
     dt.type_node_id(custom)
 }
 
@@ -77,10 +74,7 @@ fn initial_value_for_data_type(dt: &DataType) -> Variant {
                 Variant::Empty
             }
         }
-        DataType::Array2D {
-            element_type,
-            dims,
-        } => {
+        DataType::Array2D { element_type, dims } => {
             let scalar = data_type_scalar_id(element_type);
             let element = scalar_id_to_default_variant(scalar);
             let count = (dims[0] as usize) * (dims[1] as usize);
@@ -101,7 +95,11 @@ fn initial_value_for_data_type(dt: &DataType) -> Variant {
 }
 
 /// Convert a string value to a Variant for the given data type.
-pub fn string_to_variant(value: &str, data_type: &DataType, custom: &HashMap<String, NodeId>) -> Variant {
+pub fn string_to_variant(
+    value: &str,
+    data_type: &DataType,
+    custom: &HashMap<String, NodeId>,
+) -> Variant {
     match data_type {
         DataType::Boolean => Variant::Boolean(value.eq_ignore_ascii_case("true") || value == "1"),
         DataType::Int16 => value
@@ -141,7 +139,10 @@ pub fn string_to_variant(value: &str, data_type: &DataType, custom: &HashMap<Str
         DataType::ByteString => Variant::String(UAString::from(value)),
         DataType::Enum { fields, .. } => {
             let lower = value.trim().to_ascii_lowercase();
-            if let Some((v, _)) = fields.iter().find(|(_, name)| name.to_ascii_lowercase() == lower) {
+            if let Some((v, _)) = fields
+                .iter()
+                .find(|(_, name)| name.to_ascii_lowercase() == lower)
+            {
                 Variant::Int32(*v as i32)
             } else {
                 value
@@ -180,13 +181,17 @@ pub fn string_to_variant(value: &str, data_type: &DataType, custom: &HashMap<Str
                 let field_values: Vec<Variant> = fields
                     .iter()
                     .map(|f| {
-                        let field_val = parse_struct_field_value(value, &f.name, &f.data_type, custom);
+                        let field_val =
+                            parse_struct_field_value(value, &f.name, &f.data_type, custom);
                         field_val
                     })
                     .collect();
                 build_structure_variant_from_values(struct_node_id, fields, &field_values, custom)
                     .unwrap_or_else(|e| {
-                        warn!("Structure variant construction failed for '{}': {}", name, e);
+                        warn!(
+                            "Structure variant construction failed for '{}': {}",
+                            name, e
+                        );
                         Variant::ExtensionObject(ExtensionObject::null())
                     })
             } else {
@@ -254,19 +259,24 @@ fn build_structure_eo(
 
     let struct_fields: Vec<StructureField> = fields
         .iter()
-        .map(|StructField { name: fname, data_type: f_dt }| {
-            let field_dt = f_dt
-                .register_name()
-                .and_then(|n| custom.get(n))
-                .cloned()
-                .unwrap_or_else(|| NodeId::new(0, f_dt.type_id()));
-            StructureField {
-                name: UAString::from(fname.as_str()),
-                data_type: field_dt,
-                value_rank: -1,
-                ..Default::default()
-            }
-        })
+        .map(
+            |StructField {
+                 name: fname,
+                 data_type: f_dt,
+             }| {
+                let field_dt = f_dt
+                    .register_name()
+                    .and_then(|n| custom.get(n))
+                    .cloned()
+                    .unwrap_or_else(|| NodeId::new(0, f_dt.type_id()));
+                StructureField {
+                    name: UAString::from(fname.as_str()),
+                    data_type: field_dt,
+                    value_rank: -1,
+                    ..Default::default()
+                }
+            },
+        )
         .collect();
 
     let struct_def = DataTypeDefinition::Structure(StructureDefinition {
@@ -276,7 +286,11 @@ fn build_structure_eo(
         fields: Some(struct_fields),
     });
 
-    let type_name = if fields.is_empty() { "Empty" } else { "DynStruct" };
+    let type_name = if fields.is_empty() {
+        "Empty"
+    } else {
+        "DynStruct"
+    };
     let type_info = TypeInfo::from_type_definition(
         struct_def,
         type_name.to_owned(),
@@ -347,7 +361,11 @@ pub fn variant_to_display_string(v: &Variant) -> String {
 /// Convert an f64 value to a Variant for the given data type.
 /// For complex types (Array, Array2D, Structure), generates proper values using
 /// the registered `custom` type map. Enum cycles through registered fields.
-pub fn f64_to_variant(value: f64, data_type: &DataType, custom: &HashMap<String, NodeId>) -> Variant {
+pub fn f64_to_variant(
+    value: f64,
+    data_type: &DataType,
+    custom: &HashMap<String, NodeId>,
+) -> Variant {
     match data_type {
         DataType::Boolean => Variant::Boolean(value > 0.5),
         DataType::Int16 => Variant::Int16(value.clamp(i16::MIN as f64, i16::MAX as f64) as i16),
@@ -390,11 +408,13 @@ pub fn f64_to_variant(value: f64, data_type: &DataType, custom: &HashMap<String,
         }
         DataType::Structure { name, fields } => {
             if let Some(struct_node_id) = custom.get(name) {
-                build_structure_variant(struct_node_id, fields, value, custom)
-                    .unwrap_or_else(|e| {
-                        warn!("Structure variant construction failed for '{}': {}", name, e);
-                        Variant::ExtensionObject(ExtensionObject::null())
-                    })
+                build_structure_variant(struct_node_id, fields, value, custom).unwrap_or_else(|e| {
+                    warn!(
+                        "Structure variant construction failed for '{}': {}",
+                        name, e
+                    );
+                    Variant::ExtensionObject(ExtensionObject::null())
+                })
             } else {
                 Variant::ExtensionObject(ExtensionObject::null())
             }
@@ -485,7 +505,13 @@ pub fn add_variable_node(
 ) -> bool {
     let node_id = make_node_id(namespace_index, &node.node_id);
     let parent_id = make_parent_id(namespace_index, &node.parent_id);
-    if node.data_type.is_custom() && node.data_type.register_name().and_then(|n| custom.get(n)).is_none() {
+    if node.data_type.is_custom()
+        && node
+            .data_type
+            .register_name()
+            .and_then(|n| custom.get(n))
+            .is_none()
+    {
         warn!(
             "Skipping variable '{}': custom type {:?} not registered",
             node.display_name, node.data_type
@@ -591,11 +617,7 @@ pub fn collect_custom_data_types(nodes: &[ServerNode]) -> Vec<DataType> {
     out
 }
 
-fn collect_recursive(
-    dt: &DataType,
-    seen_names: &mut HashSet<String>,
-    out: &mut Vec<DataType>,
-) {
+fn collect_recursive(dt: &DataType, seen_names: &mut HashSet<String>, out: &mut Vec<DataType>) {
     match dt {
         DataType::Enum { name, .. } | DataType::Structure { name, .. } => {
             if seen_names.insert(name.clone()) {
@@ -667,25 +689,29 @@ pub fn register_custom_types_in_address_space(
                     .insert(address_space);
             }
             DataType::Structure { fields, .. } => {
-                let encoding_node_id =
-                    NodeId::new(namespace_index, format!("type_{}_be", idx));
+                let encoding_node_id = NodeId::new(namespace_index, format!("type_{}_be", idx));
                 let struct_fields: Vec<StructureField> = fields
                     .iter()
-                    .map(|StructField { name: fname, data_type: f_dt }| {
-                        let field_dt = if let Some(registered) =
-                            f_dt.register_name().and_then(|n| map.get(n))
-                        {
-                            registered.clone()
-                        } else {
-                            NodeId::new(0, f_dt.type_id())
-                        };
-                        StructureField {
-                            name: UAString::from(fname.as_str()),
-                            data_type: field_dt,
-                            value_rank: -1,
-                            ..Default::default()
-                        }
-                    })
+                    .map(
+                        |StructField {
+                             name: fname,
+                             data_type: f_dt,
+                         }| {
+                            let field_dt = if let Some(registered) =
+                                f_dt.register_name().and_then(|n| map.get(n))
+                            {
+                                registered.clone()
+                            } else {
+                                NodeId::new(0, f_dt.type_id())
+                            };
+                            StructureField {
+                                name: UAString::from(fname.as_str()),
+                                data_type: field_dt,
+                                value_rank: -1,
+                                ..Default::default()
+                            }
+                        },
+                    )
                     .collect();
                 let def = DataTypeDefinition::Structure(StructureDefinition {
                     default_encoding_id: encoding_node_id.clone(),
@@ -697,11 +723,19 @@ pub fn register_custom_types_in_address_space(
                     .data_type_definition(def)
                     .is_abstract(false)
                     .subtype_of(DataTypeId::Structure)
-                    .reference(&encoding_node_id, ReferenceTypeId::HasEncoding, ReferenceDirection::Forward)
+                    .reference(
+                        &encoding_node_id,
+                        ReferenceTypeId::HasEncoding,
+                        ReferenceDirection::Forward,
+                    )
                     .insert(address_space);
                 ObjectBuilder::new(&encoding_node_id, "Default Binary", "Default Binary")
                     .has_type_definition(ObjectTypeId::DataTypeEncodingType)
-                    .reference(&type_node_id, ReferenceTypeId::HasEncoding, ReferenceDirection::Inverse)
+                    .reference(
+                        &type_node_id,
+                        ReferenceTypeId::HasEncoding,
+                        ReferenceDirection::Inverse,
+                    )
                     .insert(address_space);
             }
             _ => continue,
@@ -760,13 +794,7 @@ pub fn register_custom_types_in_type_tree(
     }
 
     for node in nodes {
-        visit(
-            &node.data_type,
-            &mut counter,
-            &mut seen,
-            custom,
-            type_tree,
-        );
+        visit(&node.data_type, &mut counter, &mut seen, custom, type_tree);
     }
     info!(
         "Registered {} custom type node(s) in DefaultTypeTree",
@@ -855,6 +883,9 @@ mod encoding_verification_tests {
         loaders.add_type_loader(loader);
         let ctx = ContextOwned::new(NamespaceMap::new(), loaders, DecodingOptions::test());
         let byte_len = opcua_types::BinaryEncodable::byte_len(&eo, &ctx.context());
-        assert!(byte_len > 0, "encoded ExtensionObject must have non-zero length");
+        assert!(
+            byte_len > 0,
+            "encoded ExtensionObject must have non-zero length"
+        );
     }
 }

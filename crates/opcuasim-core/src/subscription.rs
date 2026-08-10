@@ -78,9 +78,7 @@ impl SubscriptionManager {
             }
             let time = variant_to_string(&fields[0]);
             let severity = variant_to_u16(&fields[1]);
-            let source = variant_to_string(&fields[2])
-                + ":"
-                + &variant_to_string(&fields[3]);
+            let source = variant_to_string(&fields[2]) + ":" + &variant_to_string(&fields[3]);
             let message = variant_to_string(&fields[4]);
             let event_type = variant_to_string(&fields[6]);
             let item = EventItem {
@@ -94,15 +92,7 @@ impl SubscriptionManager {
         });
 
         let sub_id = session
-            .create_subscription(
-                Duration::from_millis(500),
-                300,
-                10,
-                0,
-                0,
-                true,
-                callback,
-            )
+            .create_subscription(Duration::from_millis(500), 300, 10, 0, 0, true, callback)
             .await
             .map_err(|e| {
                 OpcUaSimError::SubscriptionError(format!("Create event subscription failed: {}", e))
@@ -131,11 +121,7 @@ impl SubscriptionManager {
         };
 
         session
-            .create_monitored_items(
-                sub_id,
-                TimestampsToReturn::Both,
-                vec![create_req],
-            )
+            .create_monitored_items(sub_id, TimestampsToReturn::Both, vec![create_req])
             .await
             .map_err(|e| {
                 OpcUaSimError::SubscriptionError(format!(

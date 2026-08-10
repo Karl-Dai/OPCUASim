@@ -6,8 +6,8 @@ use std::sync::Arc;
 use opcua_client::{HistoryReadAction, Session};
 use opcua_types::{
     ContinuationPoint, DataValue, DateTime, EventFilter, HistoryData, HistoryEvent,
-    HistoryReadResult, HistoryReadValueId, NodeId, NumericRange, QualifiedName,
-    ReadEventDetails, ReadRawModifiedDetails, TimestampsToReturn,
+    HistoryReadResult, HistoryReadValueId, NodeId, NumericRange, QualifiedName, ReadEventDetails,
+    ReadRawModifiedDetails, TimestampsToReturn,
 };
 
 use crate::error::OpcUaSimError;
@@ -198,12 +198,13 @@ pub async fn history_read_events(
         let results: Vec<HistoryReadResult> = session
             .history_read(action, TimestampsToReturn::Both, false, &nodes_to_read)
             .await
-            .map_err(|e| OpcUaSimError::ConnectionFailed(format!("history_read_events failed: {e}")))?;
+            .map_err(|e| {
+                OpcUaSimError::ConnectionFailed(format!("history_read_events failed: {e}"))
+            })?;
 
-        let result = results
-            .into_iter()
-            .next()
-            .ok_or_else(|| OpcUaSimError::ConnectionFailed("history_read_events empty result".into()))?;
+        let result = results.into_iter().next().ok_or_else(|| {
+            OpcUaSimError::ConnectionFailed("history_read_events empty result".into())
+        })?;
 
         if !result.status_code.is_good() {
             return Err(OpcUaSimError::ConnectionFailed(format!(
@@ -220,10 +221,7 @@ pub async fn history_read_events(
             let mut reached = false;
             for field_list in field_lists {
                 let fields = field_list.event_fields.unwrap_or_default();
-                let time_str = fields
-                    .get(4)
-                    .map(|v| format!("{v}"))
-                    .unwrap_or_default();
+                let time_str = fields.get(4).map(|v| format!("{v}")).unwrap_or_default();
                 let field_strs: Vec<String> = fields.iter().map(|v| format!("{v}")).collect();
                 out.push(EventHistoryPoint {
                     time: time_str,

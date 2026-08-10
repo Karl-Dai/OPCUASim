@@ -20,9 +20,7 @@ use opcua_server::{
 };
 use opcua_types::{MessageSecurityMode, NodeId};
 
-use super::address_space::{
-    populate_address_space, register_custom_types_in_address_space,
-};
+use super::address_space::{populate_address_space, register_custom_types_in_address_space};
 use super::event_store::EventStore;
 use super::events::DEMO_EVENTS_ID;
 use super::history_node_manager::HistoryNodeManagerImpl;
@@ -81,10 +79,8 @@ fn build_server(
     let custom_types_share: Arc<Mutex<HashMap<String, NodeId>>> =
         Arc::new(Mutex::new(HashMap::new()));
     let custom_for_closure = custom_types_share.clone();
-    let folders_captured: Arc<Mutex<Vec<ServerFolder>>> =
-        Arc::new(Mutex::new(folders.to_vec()));
-    let nodes_captured: Arc<Mutex<Vec<ServerNode>>> =
-        Arc::new(Mutex::new(nodes.to_vec()));
+    let folders_captured: Arc<Mutex<Vec<ServerFolder>>> = Arc::new(Mutex::new(folders.to_vec()));
+    let nodes_captured: Arc<Mutex<Vec<ServerNode>>> = Arc::new(Mutex::new(nodes.to_vec()));
     let ns_uri_for_closure = NAMESPACE_URI.to_string();
     let nm_builder = move |context: ServerContext, address_space: &mut AddressSpace| {
         let type_tree_clone = context.type_tree.clone();
@@ -101,11 +97,8 @@ fn build_server(
         let folders_ref = folders_captured.lock().unwrap();
         let nodes_ref = nodes_captured.lock().unwrap();
         let mut custom_ref = custom_for_closure.lock().unwrap();
-        let registered = register_custom_types_in_address_space(
-            address_space,
-            ns_index,
-            &nodes_ref,
-        );
+        let registered =
+            register_custom_types_in_address_space(address_space, ns_index, &nodes_ref);
         *custom_ref = registered;
 
         populate_address_space(
@@ -115,7 +108,11 @@ fn build_server(
             &nodes_ref,
             &custom_ref,
         );
-        HistoryNodeManagerImpl::new(inner, history_for_impl.clone(), event_store_for_impl.clone())
+        HistoryNodeManagerImpl::new(
+            inner,
+            history_for_impl.clone(),
+            event_store_for_impl.clone(),
+        )
     };
 
     let mut builder = ServerBuilder::new()
@@ -309,8 +306,8 @@ impl OpcUaServer {
 
         {
             let mut addr = sim_nm.address_space().write();
-        super::events::build_events_object(&mut *addr, ns_index)
-            .expect("failed to create DemoEvents object");
+            super::events::build_events_object(&mut *addr, ns_index)
+                .expect("failed to create DemoEvents object");
         }
 
         let events_source = opcua_types::NodeId::new(ns_index, DEMO_EVENTS_ID);

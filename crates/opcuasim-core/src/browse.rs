@@ -3,7 +3,7 @@ use std::sync::Arc;
 use log::info;
 use opcua_client::Session;
 use opcua_types::{
-    AttributeId, Array, BrowseDescription, BrowseDirection, ByteString, DataValue, NodeClass,
+    Array, AttributeId, BrowseDescription, BrowseDirection, ByteString, DataValue, NodeClass,
     NodeId, NumericRange, ReadValueId, ReferenceTypeId, StatusCode, TimestampsToReturn, UAString,
     Variant, VariantScalarTypeId, WriteValue,
 };

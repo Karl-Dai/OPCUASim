@@ -213,10 +213,7 @@ impl MasterApp {
                     tab.last_loaded = Some(std::time::Instant::now());
                 }
             }
-            BackendEvent::EventItems {
-                conn_id,
-                items,
-            } => {
+            BackendEvent::EventItems { conn_id, items } => {
                 if self.model.events.selected_conn.as_deref() == Some(&conn_id) {
                     events_panel::apply_event_items(&mut self.model.events, items);
                 }

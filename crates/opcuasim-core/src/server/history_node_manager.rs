@@ -332,8 +332,8 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
             "Message",
             "Severity",
         ];
-        let select_indices: Option<Vec<usize>> = details.filter.select_clauses.as_ref().map(
-            |clauses| {
+        let select_indices: Option<Vec<usize>> =
+            details.filter.select_clauses.as_ref().map(|clauses| {
                 clauses
                     .iter()
                     .map(|clause| {
@@ -343,15 +343,12 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
                             .and_then(|path| {
                                 path.last()
                                     .map(|qn| qn.name.to_string())
-                                    .and_then(|name| {
-                                        field_names.iter().position(|n| *n == name)
-                                    })
+                                    .and_then(|name| field_names.iter().position(|n| *n == name))
                             })
                             .unwrap_or(usize::MAX)
                     })
                     .collect()
-            },
-        );
+            });
 
         let filter_eq: Option<(usize, Variant)> = details
             .filter
@@ -370,8 +367,7 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
                 if operands.len() != 2 {
                     return None;
                 }
-                let sao = operands[0]
-                    .inner_as::<opcua_types::SimpleAttributeOperand>()?;
+                let sao = operands[0].inner_as::<opcua_types::SimpleAttributeOperand>()?;
                 let lit = operands[1].inner_as::<opcua_types::LiteralOperand>()?;
                 let field_idx = sao
                     .browse_path

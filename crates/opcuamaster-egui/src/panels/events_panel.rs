@@ -55,10 +55,8 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
 
             let has_conn = state.selected_conn.is_some();
             let in_flight = state.pending_subscribe_req.is_some();
-            let can_subscribe = has_conn
-                && !state.source_node_id.is_empty()
-                && !state.subscribed
-                && !in_flight;
+            let can_subscribe =
+                has_conn && !state.source_node_id.is_empty() && !state.subscribed && !in_flight;
             let sub_label = if in_flight {
                 "⏳ 订阅中…"
             } else if state.subscribed {
@@ -83,10 +81,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                 }
             }
 
-            let clear_resp = ui.add_enabled(
-                !state.items.is_empty(),
-                egui::Button::new("🗑 清空"),
-            );
+            let clear_resp = ui.add_enabled(!state.items.is_empty(), egui::Button::new("🗑 清空"));
             if clear_resp.clicked() {
                 if let Some(ref conn_id) = state.selected_conn {
                     clear_now = Some(conn_id.clone());
@@ -149,8 +144,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                             );
                             let sev_color = severity_color(item.severity);
                             ui.label(
-                                egui::RichText::new(format!("{}", item.severity))
-                                    .color(sev_color),
+                                egui::RichText::new(format!("{}", item.severity)).color(sev_color),
                             );
                             ui.label(
                                 egui::RichText::new(&item.source)

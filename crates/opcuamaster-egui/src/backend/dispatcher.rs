@@ -262,9 +262,7 @@ async fn handle_cmd(
             conn_id,
             req_id,
             source_node_id,
-        } => {
-            do_subscribe_events(conn_id, req_id, source_node_id, &state, &event_tx).await
-        }
+        } => do_subscribe_events(conn_id, req_id, source_node_id, &state, &event_tx).await,
         UiCommand::UnsubscribeEvents { conn_id } => {
             do_unsubscribe_events(conn_id, &state, &event_tx).await
         }
@@ -406,7 +404,11 @@ async fn connect(
             let cb_tx = event_tx.clone();
             let cb_sub_mgr = {
                 let conns = state.connections.read().map_err(|e| e.to_string())?;
-                conns.get(&id).ok_or("Connection not found")?.subscription_mgr.clone()
+                conns
+                    .get(&id)
+                    .ok_or("Connection not found")?
+                    .subscription_mgr
+                    .clone()
             };
             let on_state_change = move |s: ConnectionState| {
                 if s == ConnectionState::Connected {
@@ -460,7 +462,11 @@ async fn disconnect(
     *conn_arc.state.write().await = ConnectionState::Disconnected;
     let sub_mgr = {
         let conns = state.connections.read().map_err(|e| e.to_string())?;
-        conns.get(&id).ok_or("Connection not found")?.subscription_mgr.clone()
+        conns
+            .get(&id)
+            .ok_or("Connection not found")?
+            .subscription_mgr
+            .clone()
     };
     sub_mgr.on_disconnect().await;
     let _ = event_tx.send(BackendEvent::ConnectionStateChanged {
