@@ -13,7 +13,7 @@ use opcuasim_core::server::models::{
 };
 use opcuasim_core::server::server::OpcUaServer;
 
-const PORT: u16 = 48441;
+const PORT: u16 = 48443;
 
 fn server_config() -> ServerConfig {
     ServerConfig {

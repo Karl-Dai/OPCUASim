@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use indexmap::IndexMap;
 
 use crate::events::{
-    BrowseItem, ConnectionInfo, EventItemDto, LogRow, MonitoredRow, NodeAttrsDto, NodeGroupDto,
+    BrowseItem, ConnectionInfo, EventItemDto, HistoryMode, LogRow, MonitoredRow, NodeAttrsDto,
+    NodeGroupDto,
 };
 use crate::widgets::connection_dialog::ConnDialogState;
 
@@ -59,6 +60,9 @@ pub struct HistoryTabState {
     pub start_iso: String,
     pub end_iso: String,
     pub max_values: u32,
+    pub mode: HistoryMode,
+    pub agg_type: String,
+    pub processing_interval_ms: u64,
     pub points: Vec<crate::events::HistoryPointDto>,
     pub pending_req: Option<u64>,
     pub error: Option<String>,
@@ -79,6 +83,9 @@ impl HistoryTabState {
             start_iso: start.to_rfc3339(),
             end_iso: now.to_rfc3339(),
             max_values: 5000,
+            mode: HistoryMode::Raw,
+            agg_type: "平均".to_string(),
+            processing_interval_ms: 2000,
             points: Vec::new(),
             pending_req: None,
             error: None,

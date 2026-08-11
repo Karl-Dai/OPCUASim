@@ -559,9 +559,9 @@ fn tab_button(
         theme::BG_PANEL()
     };
     let stroke = if selected {
-        egui::Stroke::new(1.0, theme::ACCENT())
+        egui::Stroke::new(1.0_f32, theme::ACCENT())
     } else {
-        egui::Stroke::new(1.0, theme::BORDER())
+        egui::Stroke::new(1.0_f32, theme::BORDER())
     };
     let text_color = if selected {
         theme::TEXT_PRIMARY()

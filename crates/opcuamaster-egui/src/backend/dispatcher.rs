@@ -13,7 +13,9 @@ use opcuasim_core::cert_manager::{
 use opcuasim_core::client::{ConnectionState, OpcUaConnection};
 use opcuasim_core::config::{AuthConfig, ConnectionConfig, ConnectionProjectEntry, ProjectFile};
 use opcuasim_core::discovery::discover_endpoints;
-use opcuasim_core::history::history_read_raw;
+use opcuasim_core::history::{
+    history_read_events, history_read_processed, history_read_raw, HistoryDataPoint,
+};
 use opcuasim_core::method::{call_method, read_method_arguments};
 use opcuasim_core::node::{
     AccessMode, DataChangeFilterCfg, DataChangeTriggerKind, DeadbandKind, MonitoredNode, NodeGroup,
@@ -25,7 +27,7 @@ use crate::backend::state::{BackendState, ConnectionEntry};
 use crate::events::{
     AuthKindReq, BackendEvent, BrowseItem, CertRoleDto, CertSummaryDto, ConnectionInfo,
     CreateConnectionReq, DataChangeFilterReq, DataChangeTriggerKindReq, DeadbandKindReq,
-    DiscoveredEndpointDto, HistoryPointDto, LogRow, MethodArgInfo, MethodArgValue,
+    DiscoveredEndpointDto, HistoryMode, HistoryPointDto, LogRow, MethodArgInfo, MethodArgValue,
     MonitoredNodeReq, MonitoredRow, NodeAttrsDto, NodeGroupDto, ToastLevel, UiCommand,
 };
 
@@ -196,7 +198,17 @@ async fn handle_cmd(
             conn_id,
             node_id,
             req_id,
-        } => read_attrs(conn_id, node_id, req_id, &state, &event_tx).await,
+        } => {
+            read_attrs(
+                conn_id,
+                node_id,
+                req_id,
+                &state,
+                &event_tx,
+                egui_ctx.clone(),
+            )
+            .await
+        }
         UiCommand::WriteValue {
             conn_id,
             node_id,
@@ -251,10 +263,23 @@ async fn handle_cmd(
             start_iso,
             end_iso,
             max_values,
+            mode,
+            agg_type,
+            processing_interval_ms,
             req_id,
         } => {
             do_read_history(
-                conn_id, node_id, start_iso, end_iso, max_values, req_id, &state, &event_tx,
+                conn_id,
+                node_id,
+                start_iso,
+                end_iso,
+                max_values,
+                mode,
+                agg_type,
+                processing_interval_ms,
+                req_id,
+                &state,
+                &event_tx,
             )
             .await
         }
@@ -848,11 +873,40 @@ async fn read_attrs(
     req_id: u64,
     state: &Arc<BackendState>,
     event_tx: &UnboundedSender<BackendEvent>,
+    egui_ctx: egui::Context,
 ) -> Result<(), String> {
     let session = get_session(state, &conn_id).await?;
     let attrs = opcuasim_core::browse::read_node_attributes(&session, &node_id)
         .await
         .map_err(|e| e.to_string())?;
+
+    // read_node_attributes formats the value to a String (variant_to_display_string),
+    // losing Array/Structure structure. A lightweight re-read of the Value attribute
+    // recovers the raw Variant so variant_to_tree can build a real field tree.
+    if attrs
+        .value
+        .as_deref()
+        .is_some_and(|v| v.starts_with('[') || v.len() > 50)
+    {
+        if let Ok(nid) = node_id.parse::<opcua_types::NodeId>() {
+            let rvi = vec![opcua_types::ReadValueId::new(
+                nid,
+                opcua_types::AttributeId::Value,
+            )];
+            if let Ok(dvs) = session
+                .read(&rvi, opcua_types::TimestampsToReturn::Both, 0.0)
+                .await
+            {
+                if let Some(v) = dvs.first().and_then(|dv| dv.value.as_ref()) {
+                    let tree = opcuasim_core::values::variant_to_tree("值", v);
+                    egui_ctx.data_mut(|d| {
+                        d.insert_temp(egui::Id::new(("value_tree", node_id.clone())), tree)
+                    });
+                }
+            }
+        }
+    }
+
     let _ = event_tx.send(BackendEvent::NodeAttrs {
         req_id,
         attrs: NodeAttrsDto {
@@ -1405,6 +1459,9 @@ async fn do_read_history(
     start_iso: String,
     end_iso: String,
     max_values: u32,
+    mode: HistoryMode,
+    agg_type: Option<String>,
+    processing_interval_ms: Option<u64>,
     req_id: u64,
     state: &Arc<BackendState>,
     event_tx: &UnboundedSender<BackendEvent>,
@@ -1416,18 +1473,63 @@ async fn do_read_history(
     let start = parse_iso_to_datetime(&start_iso)?;
     let end = parse_iso_to_datetime(&end_iso)?;
 
-    match history_read_raw(&session, &nid, start, end, max_values, true).await {
-        Ok(pts) => {
-            let dtos: Vec<HistoryPointDto> = pts
-                .into_iter()
-                .map(|p| HistoryPointDto {
-                    source_timestamp: p.source_timestamp,
-                    server_timestamp: p.server_timestamp,
-                    value: p.value,
-                    numeric: p.numeric,
-                    status: p.status,
+    // All three modes reuse the `BackendEvent::HistoryResult` channel: app.rs's
+    // match on BackendEvent is exhaustive (no wildcard), and a new variant would
+    // break its build — app.rs is owned by another task. Events encode
+    // time/message/severity into the dto fields (source_timestamp/value/status).
+    let points_result: Result<Vec<HistoryPointDto>, String> = match mode {
+        HistoryMode::Raw => history_read_raw(&session, &nid, start, end, max_values, true)
+            .await
+            .map_err(|e| e.to_string())
+            .map(|pts| pts.into_iter().map(history_datapoint_to_dto).collect()),
+        HistoryMode::Processed => {
+            let resolved = agg_type
+                .as_deref()
+                .and_then(agg_name_to_node_id)
+                .ok_or_else(|| {
+                    format!(
+                        "不支持的聚合函数: {}",
+                        agg_type.as_deref().unwrap_or("(空)")
+                    )
+                });
+            match resolved {
+                Ok(agg_nid) => {
+                    let interval = processing_interval_ms.unwrap_or(2000);
+                    history_read_processed(
+                        &session, &nid, start, end, interval, agg_nid, max_values,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())
+                    .map(|pts| pts.into_iter().map(history_datapoint_to_dto).collect())
+                }
+                Err(msg) => Err(msg),
+            }
+        }
+        HistoryMode::Events => history_read_events(
+            &session,
+            &nid,
+            start,
+            end,
+            max_values,
+            opcua_types::EventFilter::default(),
+        )
+        .await
+        .map_err(|e| e.to_string())
+        .map(|pts| {
+            pts.into_iter()
+                .map(|ep| HistoryPointDto {
+                    source_timestamp: ep.time.clone(),
+                    server_timestamp: String::new(),
+                    value: ep.fields.get(6).cloned().unwrap_or_default(),
+                    numeric: None,
+                    status: ep.fields.get(7).cloned().unwrap_or_default(),
                 })
-                .collect();
+                .collect()
+        }),
+    };
+
+    match points_result {
+        Ok(dtos) => {
             let _ = event_tx.send(BackendEvent::HistoryResult {
                 req_id,
                 node_id: node_id.clone(),
@@ -1436,8 +1538,7 @@ async fn do_read_history(
             });
             Ok(())
         }
-        Err(e) => {
-            let msg = e.to_string();
+        Err(msg) => {
             let _ = event_tx.send(BackendEvent::HistoryResult {
                 req_id,
                 node_id: node_id.clone(),
@@ -1447,6 +1548,32 @@ async fn do_read_history(
             Err(format!("HistoryRead failed: {msg}"))
         }
     }
+}
+
+fn history_datapoint_to_dto(p: HistoryDataPoint) -> HistoryPointDto {
+    HistoryPointDto {
+        source_timestamp: p.source_timestamp,
+        server_timestamp: p.server_timestamp,
+        value: p.value,
+        numeric: p.numeric,
+        status: p.status,
+    }
+}
+
+fn agg_name_to_node_id(name: &str) -> Option<opcua_types::NodeId> {
+    use opcua_types::ObjectId as O;
+    let id = match name {
+        "平均" => O::AggregateFunction_Average,
+        "最小" => O::AggregateFunction_Minimum,
+        "最大" => O::AggregateFunction_Maximum,
+        "计数" => O::AggregateFunction_Count,
+        "TimeAvg" => O::AggregateFunction_TimeAverage,
+        "总计" => O::AggregateFunction_Total,
+        "Delta" => O::AggregateFunction_Delta,
+        "PercentGood" => O::AggregateFunction_PercentGood,
+        _ => return None,
+    };
+    Some(id.into())
 }
 
 fn parse_iso_to_datetime(s: &str) -> Result<opcua_types::DateTime, String> {

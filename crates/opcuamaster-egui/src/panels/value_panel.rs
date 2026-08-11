@@ -58,12 +58,34 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
 
             section_label(ui, "Current Value");
             let value = row.value.as_deref().unwrap_or("—");
-            ui.label(
-                egui::RichText::new(value)
-                    .size(22.0)
-                    .monospace()
-                    .color(theme::TEXT_PRIMARY()),
-            );
+            if value != "—" && super::is_complex_value(value) {
+                let preview = super::truncate_safe(value, 60);
+                ui.label(
+                    egui::RichText::new(preview)
+                        .monospace()
+                        .color(theme::TEXT_PRIMARY()),
+                );
+                egui::CollapsingHeader::new("📂 展开完整值（文本视图）")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(240.0)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(value)
+                                        .monospace()
+                                        .color(theme::TEXT_PRIMARY()),
+                                );
+                            });
+                    });
+            } else {
+                ui.label(
+                    egui::RichText::new(value)
+                        .size(22.0)
+                        .monospace()
+                        .color(theme::TEXT_PRIMARY()),
+                );
+            }
             if let Some(q) = &row.quality {
                 ui.colored_label(super::quality_color(q), q);
             }
@@ -108,6 +130,16 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                 }
                 if !attrs.description.is_empty() {
                     info_row(ui, "Desc", &attrs.description);
+                }
+                let tree_id = egui::Id::new(("value_tree", node_id.clone()));
+                let tree: Option<Vec<opcuasim_core::values::TreeNode>> =
+                    ui.ctx().data(|d| d.get_temp(tree_id));
+                if let Some(nodes) = &tree {
+                    if nodes.iter().any(|n| !n.children.is_empty()) {
+                        ui.add_space(4.0);
+                        section_label(ui, "字段树");
+                        super::show_variant_tree(ui, nodes);
+                    }
                 }
             }
         }

@@ -182,8 +182,6 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
 fn format_time_short(t: &str) -> String {
     if t.len() >= 19 {
         t[11..19].to_string()
-    } else if t.len() >= 10 {
-        t.to_string()
     } else {
         t.to_string()
     }

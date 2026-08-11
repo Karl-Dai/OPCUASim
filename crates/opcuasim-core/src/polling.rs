@@ -75,7 +75,7 @@ impl PollingManager {
                             let value_str = dv
                                 .value
                                 .as_ref()
-                                .map(|v| crate::server::address_space::variant_to_display_string(v))
+                                .map(crate::server::address_space::variant_to_display_string)
                                 .unwrap_or_else(|| "null".to_string());
                             let quality_str = dv
                                 .status

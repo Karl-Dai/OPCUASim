@@ -318,7 +318,7 @@ impl SubscriptionManager {
             let value_str = data_value
                 .value
                 .as_ref()
-                .map(|v| crate::server::address_space::variant_to_display_string(v))
+                .map(crate::server::address_space::variant_to_display_string)
                 .unwrap_or_else(|| "null".to_string());
             let data_type_str = data_value.value.as_ref().map(|v| match v.type_id() {
                 opcua_types::variant::VariantTypeId::Empty => "Empty".to_string(),
@@ -428,7 +428,7 @@ impl SubscriptionManager {
 
                         let value = val_dv
                             .and_then(|dv| dv.value.as_ref())
-                            .map(|v| crate::server::address_space::variant_to_display_string(v));
+                            .map(crate::server::address_space::variant_to_display_string);
                         let quality = val_dv
                             .and_then(|dv| dv.status.as_ref())
                             .map(|s| format!("{}", s));
