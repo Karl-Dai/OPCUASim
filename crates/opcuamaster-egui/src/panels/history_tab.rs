@@ -1,6 +1,6 @@
 use chrono::{DateTime, Local, TimeZone};
 
-use crate::events::UiCommand;
+use crate::events::{HistoryMode, UiCommand};
 use crate::model::HistoryTabState;
 use crate::runtime::BackendHandle;
 
@@ -16,6 +16,17 @@ const QUICK_RANGES: &[(&str, i64)] = &[
     ("1h", 3600),
     ("6h", 21600),
     ("24h", 86400),
+];
+
+const AGG_NAMES: &[&str] = &[
+    "平均",
+    "最小",
+    "最大",
+    "计数",
+    "TimeAvg",
+    "总计",
+    "Delta",
+    "PercentGood",
 ];
 
 pub fn show(ui: &mut egui::Ui, state: &mut HistoryTabState) -> TabActions {
@@ -36,6 +47,50 @@ pub fn show(ui: &mut egui::Ui, state: &mut HistoryTabState) -> TabActions {
                 .color(opcuaegui_shared::theme::TEXT_MUTED()),
         );
     });
+
+    let mut mode_changed = false;
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("模式")
+                .small()
+                .color(opcuaegui_shared::theme::TEXT_MUTED()),
+        );
+        mode_changed |= ui
+            .selectable_value(&mut state.mode, HistoryMode::Raw, "原始")
+            .changed();
+        mode_changed |= ui
+            .selectable_value(&mut state.mode, HistoryMode::Processed, "聚合")
+            .changed();
+        mode_changed |= ui
+            .selectable_value(&mut state.mode, HistoryMode::Events, "事件")
+            .changed();
+    });
+    if state.mode == HistoryMode::Processed {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("聚合函数")
+                    .small()
+                    .color(opcuaegui_shared::theme::TEXT_MUTED()),
+            );
+            egui::ComboBox::new("history_agg_fn", &state.agg_type).show_ui(ui, |ui| {
+                for &name in AGG_NAMES {
+                    ui.selectable_value(&mut state.agg_type, name.to_string(), name);
+                }
+            });
+            ui.label(
+                egui::RichText::new("间隔(ms)")
+                    .small()
+                    .color(opcuaegui_shared::theme::TEXT_MUTED()),
+            );
+            ui.add(egui::DragValue::new(&mut state.processing_interval_ms).range(100..=3_600_000));
+        });
+    }
+    if mode_changed {
+        state.points.clear();
+        state.plot_cache.clear();
+        state.error = None;
+        actions.refresh = true;
+    }
 
     let active_secs = active_quick_range(state);
     ui.horizontal(|ui| {
@@ -103,8 +158,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut HistoryTabState) -> TabActions {
         }
         if !state.points.is_empty() {
             ui.separator();
+            let unit = if state.mode == HistoryMode::Events {
+                "个事件"
+            } else {
+                "个点"
+            };
             ui.label(
-                egui::RichText::new(format!("{} 个点", state.points.len()))
+                egui::RichText::new(format!("{} {}", state.points.len(), unit))
                     .small()
                     .color(opcuaegui_shared::theme::TEXT_MUTED()),
             );
@@ -117,31 +177,32 @@ pub fn show(ui: &mut egui::Ui, state: &mut HistoryTabState) -> TabActions {
 
     ui.separator();
 
-    egui_plot::Plot::new(format!("history_plot_{}", state.node_id))
-        .height(220.0)
-        .x_axis_formatter(|gm, _| format_time_axis(gm.value))
-        .label_formatter(|name, value| {
-            let ts = format_time_axis(value.x);
-            if name.is_empty() {
-                format!("{ts}\n{:.4}", value.y)
-            } else {
-                format!("{name}\n{ts}\n{:.4}", value.y)
-            }
-        })
-        .show(ui, |plot_ui| {
-            if state.plot_cache.is_empty() {
-                return;
-            }
-            plot_ui.line(
-                egui_plot::Line::new(
-                    state.display_name.clone(),
-                    egui_plot::PlotPoints::from(state.plot_cache.clone()),
-                )
-                .color(opcuaegui_shared::theme::ACCENT()),
-            );
-        });
-
-    ui.separator();
+    if state.mode != HistoryMode::Events {
+        egui_plot::Plot::new(format!("history_plot_{}", state.node_id))
+            .height(220.0)
+            .x_axis_formatter(|gm, _| format_time_axis(gm.value))
+            .label_formatter(|name, value| {
+                let ts = format_time_axis(value.x);
+                if name.is_empty() {
+                    format!("{ts}\n{:.4}", value.y)
+                } else {
+                    format!("{name}\n{ts}\n{:.4}", value.y)
+                }
+            })
+            .show(ui, |plot_ui| {
+                if state.plot_cache.is_empty() {
+                    return;
+                }
+                plot_ui.line(
+                    egui_plot::Line::new(
+                        state.display_name.clone(),
+                        egui_plot::PlotPoints::from(state.plot_cache.clone()),
+                    )
+                    .color(opcuaegui_shared::theme::ACCENT()),
+                );
+            });
+        ui.separator();
+    }
 
     if state.points.is_empty() && state.pending_req.is_none() {
         opcuaegui_shared::widgets::empty_state(
@@ -153,40 +214,76 @@ pub fn show(ui: &mut egui::Ui, state: &mut HistoryTabState) -> TabActions {
         return actions;
     }
 
-    egui_extras::TableBuilder::new(ui)
-        .id_salt(format!("history_table_{}", state.node_id))
-        .striped(true)
-        .column(egui_extras::Column::auto().at_least(220.0))
-        .column(egui_extras::Column::auto().at_least(120.0))
-        .column(egui_extras::Column::remainder().at_least(80.0))
-        .header(20.0, |mut h| {
-            h.col(|ui| {
-                ui.strong("Source Timestamp");
-            });
-            h.col(|ui| {
-                ui.strong("Value");
-            });
-            h.col(|ui| {
-                ui.strong("Status");
-            });
-        })
-        .body(|body| {
-            let total = state.points.len();
-            body.rows(18.0, total, |mut row| {
-                let i = row.index();
-                let p = &state.points[i];
-                row.col(|ui| {
-                    ui.label(&p.source_timestamp);
+    if state.mode == HistoryMode::Events {
+        egui_extras::TableBuilder::new(ui)
+            .id_salt(format!("history_events_table_{}", state.node_id))
+            .striped(true)
+            .column(egui_extras::Column::auto().at_least(220.0))
+            .column(egui_extras::Column::auto().at_least(100.0))
+            .column(egui_extras::Column::remainder().at_least(120.0))
+            .header(20.0, |mut h| {
+                h.col(|ui| {
+                    ui.strong("Time");
                 });
-                row.col(|ui| {
-                    ui.monospace(&p.value);
+                h.col(|ui| {
+                    ui.strong("Severity");
                 });
-                row.col(|ui| {
-                    let color = super::quality_color(&p.status);
-                    ui.colored_label(color, &p.status);
+                h.col(|ui| {
+                    ui.strong("Message");
+                });
+            })
+            .body(|body| {
+                let total = state.points.len();
+                body.rows(18.0, total, |mut row| {
+                    let i = row.index();
+                    let p = &state.points[i];
+                    row.col(|ui| {
+                        ui.label(&p.source_timestamp);
+                    });
+                    row.col(|ui| {
+                        ui.label(&p.status);
+                    });
+                    row.col(|ui| {
+                        ui.monospace(&p.value);
+                    });
                 });
             });
-        });
+    } else {
+        egui_extras::TableBuilder::new(ui)
+            .id_salt(format!("history_table_{}", state.node_id))
+            .striped(true)
+            .column(egui_extras::Column::auto().at_least(220.0))
+            .column(egui_extras::Column::auto().at_least(120.0))
+            .column(egui_extras::Column::remainder().at_least(80.0))
+            .header(20.0, |mut h| {
+                h.col(|ui| {
+                    ui.strong("Source Timestamp");
+                });
+                h.col(|ui| {
+                    ui.strong("Value");
+                });
+                h.col(|ui| {
+                    ui.strong("Status");
+                });
+            })
+            .body(|body| {
+                let total = state.points.len();
+                body.rows(18.0, total, |mut row| {
+                    let i = row.index();
+                    let p = &state.points[i];
+                    row.col(|ui| {
+                        ui.label(&p.source_timestamp);
+                    });
+                    row.col(|ui| {
+                        ui.monospace(&p.value);
+                    });
+                    row.col(|ui| {
+                        let color = super::quality_color(&p.status);
+                        ui.colored_label(color, &p.status);
+                    });
+                });
+            });
+    }
 
     actions
 }
@@ -200,12 +297,22 @@ pub fn dispatch_refresh(
     let req_id = *next_req_id;
     state.pending_req = Some(req_id);
     state.error = None;
+    let (agg_type, processing_interval_ms) = match state.mode {
+        HistoryMode::Processed => (
+            Some(state.agg_type.clone()),
+            Some(state.processing_interval_ms),
+        ),
+        _ => (None, None),
+    };
     backend.send(UiCommand::ReadHistory {
         conn_id: state.conn_id.clone(),
         node_id: state.node_id.clone(),
         start_iso: state.start_iso.clone(),
         end_iso: state.end_iso.clone(),
         max_values: state.max_values,
+        mode: state.mode,
+        agg_type,
+        processing_interval_ms,
         req_id,
     });
 }

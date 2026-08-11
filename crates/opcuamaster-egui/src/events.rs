@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HistoryMode {
+    #[default]
+    Raw,
+    Processed,
+    Events,
+}
+
 #[derive(Debug, Clone)]
 pub enum UiCommand {
     CreateConnection(CreateConnectionReq),
@@ -92,6 +100,9 @@ pub enum UiCommand {
         start_iso: String,
         end_iso: String,
         max_values: u32,
+        mode: HistoryMode,
+        agg_type: Option<String>,
+        processing_interval_ms: Option<u64>,
         req_id: u64,
     },
     SubscribeEventInFlight {
