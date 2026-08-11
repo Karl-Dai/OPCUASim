@@ -198,7 +198,17 @@ async fn handle_cmd(
             conn_id,
             node_id,
             req_id,
-        } => read_attrs(conn_id, node_id, req_id, &state, &event_tx).await,
+        } => {
+            read_attrs(
+                conn_id,
+                node_id,
+                req_id,
+                &state,
+                &event_tx,
+                egui_ctx.clone(),
+            )
+            .await
+        }
         UiCommand::WriteValue {
             conn_id,
             node_id,
@@ -863,11 +873,40 @@ async fn read_attrs(
     req_id: u64,
     state: &Arc<BackendState>,
     event_tx: &UnboundedSender<BackendEvent>,
+    egui_ctx: egui::Context,
 ) -> Result<(), String> {
     let session = get_session(state, &conn_id).await?;
     let attrs = opcuasim_core::browse::read_node_attributes(&session, &node_id)
         .await
         .map_err(|e| e.to_string())?;
+
+    // read_node_attributes formats the value to a String (variant_to_display_string),
+    // losing Array/Structure structure. A lightweight re-read of the Value attribute
+    // recovers the raw Variant so variant_to_tree can build a real field tree.
+    if attrs
+        .value
+        .as_deref()
+        .is_some_and(|v| v.starts_with('[') || v.len() > 50)
+    {
+        if let Ok(nid) = node_id.parse::<opcua_types::NodeId>() {
+            let rvi = vec![opcua_types::ReadValueId::new(
+                nid,
+                opcua_types::AttributeId::Value,
+            )];
+            if let Ok(dvs) = session
+                .read(&rvi, opcua_types::TimestampsToReturn::Both, 0.0)
+                .await
+            {
+                if let Some(v) = dvs.first().and_then(|dv| dv.value.as_ref()) {
+                    let tree = opcuasim_core::values::variant_to_tree("值", v);
+                    egui_ctx.data_mut(|d| {
+                        d.insert_temp(egui::Id::new(("value_tree", node_id.clone())), tree)
+                    });
+                }
+            }
+        }
+    }
+
     let _ = event_tx.send(BackendEvent::NodeAttrs {
         req_id,
         attrs: NodeAttrsDto {

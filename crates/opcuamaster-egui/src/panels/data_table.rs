@@ -6,6 +6,13 @@ use crate::events::UiCommand;
 use crate::model::AppModel;
 use crate::runtime::BackendHandle;
 
+#[derive(Clone)]
+struct ComplexPopup {
+    node_id: String,
+    title: String,
+    value: String,
+}
+
 pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
     let Some(conn_id) = model.selected_conn.clone() else {
         empty_state(
@@ -178,7 +185,28 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
                 });
                 row.col(|ui| {
                     let v = data.value.as_deref().unwrap_or("—");
-                    ui.monospace(v);
+                    if v != "—" && super::is_complex_value(v) {
+                        let preview = super::truncate_safe(v, 18);
+                        let btn = egui::Button::new(
+                            egui::RichText::new(format!("📂 {preview}")).monospace(),
+                        )
+                        .frame(false);
+                        if ui.add(btn).clicked() {
+                            let popup_id = egui::Id::new("data_table_complex_popup");
+                            ui.ctx().data_mut(|d| {
+                                d.insert_temp(
+                                    popup_id,
+                                    ComplexPopup {
+                                        node_id: data.node_id.clone(),
+                                        title: data.display_name.clone(),
+                                        value: v.to_string(),
+                                    },
+                                )
+                            });
+                        }
+                    } else {
+                        ui.monospace(v);
+                    }
                 });
                 row.col(|ui| {
                     let q = data.quality.as_deref().unwrap_or("");
@@ -269,5 +297,45 @@ pub fn show(ui: &mut egui::Ui, model: &mut AppModel, backend: &BackendHandle) {
             crate::panels::browse_panel::open_history_tab(model, &conn_id, &node_id, &display_name);
         }
         None => {}
+    }
+
+    let popup_id = egui::Id::new("data_table_complex_popup");
+    let popup = ui.ctx().data(|d| d.get_temp::<ComplexPopup>(popup_id));
+    if let Some(p) = popup {
+        let mut open = true;
+        egui::Window::new(format!("复杂值 - {}", p.title))
+            .resizable(true)
+            .default_width(440.0)
+            .default_height(340.0)
+            .open(&mut open)
+            .show(ui.ctx(), |ui| {
+                let tree_id = egui::Id::new(("value_tree", &p.node_id));
+                let tree: Option<Vec<opcuasim_core::values::TreeNode>> =
+                    ui.ctx().data(|d| d.get_temp(tree_id));
+                if let Some(nodes) = &tree {
+                    if nodes.iter().any(|n| !n.children.is_empty()) {
+                        super::show_variant_tree(ui, nodes);
+                        return;
+                    }
+                }
+                ui.label(
+                    egui::RichText::new(
+                        "监控值未保留 Variant 结构，仅文本视图。点击「读取」可获取字段树。",
+                    )
+                    .small()
+                    .color(theme::TEXT_MUTED()),
+                );
+                ui.separator();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(&p.value)
+                            .monospace()
+                            .color(theme::TEXT_PRIMARY()),
+                    );
+                });
+            });
+        if !open {
+            ui.ctx().data_mut(|d| d.remove::<ComplexPopup>(popup_id));
+        }
     }
 }
