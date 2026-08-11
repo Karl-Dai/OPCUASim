@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use opcua_client::{HistoryReadAction, Session};
 use opcua_types::{
-    ContinuationPoint, DataValue, DateTime, EventFilter, HistoryData, HistoryEvent,
-    HistoryReadResult, HistoryReadValueId, NodeId, NumericRange, QualifiedName, ReadEventDetails,
-    ReadRawModifiedDetails, TimestampsToReturn,
+    AggregateConfiguration, ContinuationPoint, DataValue, DateTime, EventFilter, HistoryData,
+    HistoryEvent, HistoryReadResult, HistoryReadValueId, NodeId, NumericRange, QualifiedName,
+    ReadEventDetails, ReadProcessedDetails, ReadRawModifiedDetails, TimestampsToReturn,
 };
 
 use crate::error::OpcUaSimError;
@@ -108,6 +108,116 @@ pub async fn history_read_raw(
                 .await
             {
                 log::warn!("Failed to release history continuation point: {e}");
+            }
+            break;
+        }
+
+        continuation_point = result.continuation_point;
+    }
+
+    Ok(out)
+}
+
+/// Read processed (aggregated) history: buckets computed by the server with
+/// the given `processing_interval_ms` and aggregation function.
+///
+/// Internally follows continuation points with the same paging / release
+/// pattern as [`history_read_raw`].
+pub async fn history_read_processed(
+    session: &Arc<Session>,
+    node_id: &NodeId,
+    start: DateTime,
+    end: DateTime,
+    processing_interval_ms: u64,
+    agg_type: NodeId,
+    max_values: u32,
+) -> Result<Vec<HistoryDataPoint>, OpcUaSimError> {
+    let mut out: Vec<HistoryDataPoint> = Vec::new();
+    let mut continuation_point = ContinuationPoint::null();
+
+    loop {
+        let action = HistoryReadAction::ReadProcessedDetails(ReadProcessedDetails {
+            start_time: start,
+            end_time: end,
+            processing_interval: processing_interval_ms as f64 / 1000.0,
+            aggregate_type: Some(vec![agg_type.clone()]),
+            aggregate_configuration: AggregateConfiguration {
+                use_server_capabilities_defaults: true,
+                treat_uncertain_as_bad: false,
+                percent_data_bad: 0,
+                percent_data_good: 100,
+                use_sloped_extrapolation: false,
+            },
+        });
+        let nodes_to_read = vec![HistoryReadValueId {
+            node_id: node_id.clone(),
+            index_range: NumericRange::None,
+            data_encoding: QualifiedName::null(),
+            continuation_point: continuation_point.clone(),
+        }];
+
+        let results: Vec<HistoryReadResult> = session
+            .history_read(action, TimestampsToReturn::Both, false, &nodes_to_read)
+            .await
+            .map_err(|e| {
+                OpcUaSimError::ConnectionFailed(format!("history_read_processed failed: {e}"))
+            })?;
+
+        let result = results.into_iter().next().ok_or_else(|| {
+            OpcUaSimError::ConnectionFailed("history_read_processed empty result".into())
+        })?;
+
+        if !result.status_code.is_good() {
+            return Err(OpcUaSimError::ConnectionFailed(format!(
+                "history_read_processed status: {}",
+                result.status_code
+            )));
+        }
+
+        let history_data: Option<Box<HistoryData>> =
+            result.history_data.into_inner_as::<HistoryData>();
+        let dvs: Vec<DataValue> = history_data
+            .and_then(|hd| hd.data_values)
+            .unwrap_or_default();
+
+        let reached_max = {
+            let mut reached = false;
+            for dv in dvs {
+                out.push(map_data_value(dv));
+                if out.len() as u32 >= max_values {
+                    reached = true;
+                    break;
+                }
+            }
+            reached
+        };
+
+        // All data consumed and server has no more pages: done.
+        if result.continuation_point.is_null() {
+            break;
+        }
+
+        // Reached the caller's max_values with a pending continuation point:
+        // release it server-side per OPC UA Part 4 5.10.3.
+        if reached_max {
+            let release_nodes = vec![HistoryReadValueId {
+                node_id: node_id.clone(),
+                index_range: NumericRange::None,
+                data_encoding: QualifiedName::null(),
+                continuation_point: result.continuation_point.clone(),
+            }];
+            let release_action =
+                HistoryReadAction::ReadProcessedDetails(ReadProcessedDetails::default());
+            if let Err(e) = session
+                .history_read(
+                    release_action,
+                    TimestampsToReturn::Neither,
+                    true,
+                    &release_nodes,
+                )
+                .await
+            {
+                log::warn!("Failed to release history_processed continuation point: {e}");
             }
             break;
         }
