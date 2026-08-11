@@ -218,11 +218,8 @@ async fn server_events_e2e() {
     });
     // Relaxed: if not a perfect match, at least confirm we have any new severity-500 events.
     let any_severity_500 = all_events.iter().any(|e| e.severity == 500);
-    if limit_event.is_some() {
-        println!(
-            "[OK] threshold alarm observed: {:?}",
-            limit_event.unwrap().message
-        );
+    if let Some(limit_event) = limit_event {
+        println!("[OK] threshold alarm observed: {:?}", limit_event.message);
     } else if any_severity_500 {
         println!("[OK] severity-500 events present (threshold-related)");
     } else {

@@ -202,7 +202,7 @@ pub async fn read_node_attributes(
     let value_dv = values.get(3);
     let value = value_dv
         .and_then(|dv| dv.value.as_ref())
-        .map(|v| crate::server::address_space::variant_to_display_string(v));
+        .map(crate::server::address_space::variant_to_display_string);
 
     let quality = value_dv
         .and_then(|dv| dv.status.as_ref())
@@ -311,7 +311,8 @@ fn element_scalar_id(data_type: &str) -> VariantScalarTypeId {
         "UInt64" => VariantScalarTypeId::UInt64,
         "Float" => VariantScalarTypeId::Float,
         "String" => VariantScalarTypeId::String,
-        "Double" | _ => VariantScalarTypeId::Double,
+        "Double" => VariantScalarTypeId::Double,
+        _ => VariantScalarTypeId::Double,
     }
 }
 

@@ -113,7 +113,7 @@ pub async fn register_demo_methods(
             let mut dv = DataValue::new_now(Variant::Double(value));
             dv.source_timestamp = Some(now);
             dv.server_timestamp = Some(now);
-            match nm_for_set.set_value(&*subs_for_set, &nid, None, dv) {
+            match nm_for_set.set_value(&subs_for_set, &nid, None, dv) {
                 Ok(()) => Ok(vec![Variant::String(UAString::from("Good"))]),
                 Err(e) => Ok(vec![Variant::String(UAString::from(format!("{}", e)))]),
             }

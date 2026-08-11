@@ -86,7 +86,7 @@ async fn preset_methods_are_callable() {
         outcome
             .outputs
             .first()
-            .is_some_and(|v| matches!(v, Variant::String(s) if s.to_string() == "hello")),
+            .is_some_and(|v| matches!(v, Variant::String(s) if s == "hello")),
         "Echo output mismatch: {:?}",
         outcome.outputs
     );
@@ -165,7 +165,7 @@ async fn preset_methods_are_callable() {
         out_ok
             .outputs
             .first()
-            .is_some_and(|v| matches!(v, Variant::String(s) if s.to_string() == "Good")),
+            .is_some_and(|v| matches!(v, Variant::String(s) if s == "Good")),
         "SetNodeValue happy-path status mismatch: {:?}",
         out_ok.outputs
     );

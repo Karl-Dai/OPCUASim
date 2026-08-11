@@ -180,11 +180,7 @@ pub fn string_to_variant(
             if let Some(struct_node_id) = custom.get(name) {
                 let field_values: Vec<Variant> = fields
                     .iter()
-                    .map(|f| {
-                        let field_val =
-                            parse_struct_field_value(value, &f.name, &f.data_type, custom);
-                        field_val
-                    })
+                    .map(|f| parse_struct_field_value(value, &f.name, &f.data_type, custom))
                     .collect();
                 build_structure_variant_from_values(struct_node_id, fields, &field_values, custom)
                     .unwrap_or_else(|e| {
@@ -637,13 +633,13 @@ fn collect_recursive(dt: &DataType, seen_names: &mut HashSet<String>, out: &mut 
                 warn!("Duplicate custom data type name '{}' skipped", name);
             }
         }
-        DataType::Array { element_type } | DataType::Array2D { element_type, .. } => {
-            if element_type.is_custom() {
-                warn!(
-                    "Arrays of custom element type ({:?}) are not supported by Task 6",
-                    element_type
-                );
-            }
+        DataType::Array { element_type } | DataType::Array2D { element_type, .. }
+            if element_type.is_custom() =>
+        {
+            warn!(
+                "Arrays of custom element type ({:?}) are not supported by Task 6",
+                element_type
+            );
         }
         _ => {}
     }
@@ -780,14 +776,12 @@ pub fn register_custom_types_in_type_tree(
                     *counter += 1;
                 }
             }
-            DataType::Enum { name, .. } => {
-                if seen.insert(name.clone()) {
-                    if let Some(type_node_id) = custom.get(name) {
-                        let parent: NodeId = DataTypeId::Enumeration.into();
-                        type_tree.add_type_node(type_node_id, &parent, NodeClass::DataType);
-                    }
-                    *counter += 1;
+            DataType::Enum { name, .. } if seen.insert(name.clone()) => {
+                if let Some(type_node_id) = custom.get(name) {
+                    let parent: NodeId = DataTypeId::Enumeration.into();
+                    type_tree.add_type_node(type_node_id, &parent, NodeClass::DataType);
                 }
+                *counter += 1;
             }
             _ => {}
         }
@@ -808,7 +802,7 @@ mod encoding_verification_tests {
 
     use super::*;
     use opcua_types::{
-        custom::{DataTypeTree, EncodingIds, ParentIds, StructTypeInfo, TypeInfo},
+        custom::{DataTypeTree, EncodingIds, ParentIds, TypeInfo},
         ContextOwned, DecodingOptions, NamespaceMap, NodeId, StructureDefinition, StructureField,
         StructureType, TypeLoaderCollection, Variant,
     };

@@ -34,7 +34,7 @@ pub fn info_row(ui: &mut Ui, label: &str, value: &str) {
 pub fn status_chip(ui: &mut Ui, color: Color32, icon: &str, text: &str) -> Response {
     Frame::default()
         .fill(color.linear_multiply(0.18))
-        .stroke(Stroke::new(1.0, color.linear_multiply(0.55)))
+        .stroke(Stroke::new(1.0_f32, color.linear_multiply(0.55)))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::symmetric(8, 2))
         .show(ui, |ui| {
@@ -67,7 +67,7 @@ pub fn empty_state(ui: &mut Ui, icon: &str, title: &str, hint: Option<&str>) {
 pub fn toast_card(ui: &mut Ui, color: Color32, message: &str) {
     Frame::default()
         .fill(theme::BG_RAISED())
-        .stroke(Stroke::new(1.0, color.linear_multiply(0.6)))
+        .stroke(Stroke::new(1.0_f32, color.linear_multiply(0.6)))
         .corner_radius(CornerRadius::same(6))
         .inner_margin(Margin::symmetric(12, 8))
         .show(ui, |ui| {

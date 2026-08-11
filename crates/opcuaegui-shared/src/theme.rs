@@ -236,7 +236,7 @@ pub fn apply(ctx: &egui::Context) {
     };
     visuals.panel_fill = bg_panel();
     visuals.window_fill = bg_raised();
-    visuals.window_stroke = Stroke::new(1.0, border());
+    visuals.window_stroke = Stroke::new(1.0_f32, border());
     visuals.window_corner_radius = CornerRadius::same(8);
     visuals.faint_bg_color = match current_mode() {
         ThemeMode::Dark => Color32::from_rgb(32, 35, 42),
@@ -246,8 +246,8 @@ pub fn apply(ctx: &egui::Context) {
     visuals.code_bg_color = bg_base();
     visuals.hyperlink_color = accent();
 
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border());
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, text_primary());
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, border());
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, text_primary());
     visuals.widgets.noninteractive.corner_radius = CornerRadius::same(4);
 
     let inactive_bg = match current_mode() {
@@ -264,8 +264,8 @@ pub fn apply(ctx: &egui::Context) {
     };
     visuals.widgets.inactive.bg_fill = inactive_bg;
     visuals.widgets.inactive.weak_bg_fill = inactive_weak;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, inactive_stroke);
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, text_primary());
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, inactive_stroke);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, text_primary());
     visuals.widgets.inactive.corner_radius = CornerRadius::same(4);
 
     let hover_weak = match current_mode() {
@@ -278,8 +278,8 @@ pub fn apply(ctx: &egui::Context) {
     };
     visuals.widgets.hovered.bg_fill = bg_hover();
     visuals.widgets.hovered.weak_bg_fill = hover_weak;
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, accent());
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, hover_text);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, accent());
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, hover_text);
     visuals.widgets.hovered.corner_radius = CornerRadius::same(4);
 
     let active_text = match current_mode() {
@@ -288,16 +288,16 @@ pub fn apply(ctx: &egui::Context) {
     };
     visuals.widgets.active.bg_fill = accent_dim();
     visuals.widgets.active.weak_bg_fill = accent_soft();
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, accent());
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, active_text);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, accent());
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, active_text);
     visuals.widgets.active.corner_radius = CornerRadius::same(4);
 
     visuals.widgets.open.bg_fill = accent_soft();
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, accent());
-    visuals.widgets.open.fg_stroke = Stroke::new(1.0, text_primary());
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, accent());
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, text_primary());
 
     visuals.selection.bg_fill = accent_soft();
-    visuals.selection.stroke = Stroke::new(1.0, accent());
+    visuals.selection.stroke = Stroke::new(1.0_f32, accent());
 
     ctx.set_visuals(visuals);
 

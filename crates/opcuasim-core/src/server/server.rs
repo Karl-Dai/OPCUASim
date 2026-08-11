@@ -27,7 +27,7 @@ use super::events_history_node_manager::EventsHistoryNodeManager;
 use super::history_node_manager::HistoryNodeManagerImpl;
 use super::history_store::HistoryStore;
 use super::models::{ServerConfig, ServerFolder, ServerNode, ServerState};
-use super::simulation::SimulationEngine;
+use super::simulation::{EventNotifier, SimulationEngine};
 use crate::error::OpcUaSimError;
 
 const APPLICATION_URI: &str = "urn:opcuasim:server";
@@ -309,14 +309,14 @@ impl OpcUaServer {
         // builder closure); here we add the corresponding type-tree entries so
         // clients can resolve the types when browsing.
         super::address_space::register_custom_types_in_type_tree(
-            &mut *handle.type_tree().write(),
+            &mut handle.type_tree().write(),
             &custom_types,
             nodes,
         );
 
         {
             let mut addr = sim_nm.address_space().write();
-            super::events::build_events_object(&mut *addr, ns_index)
+            super::events::build_events_object(&mut addr, ns_index)
                 .expect("failed to create DemoEvents object");
         }
 
@@ -338,16 +338,15 @@ impl OpcUaServer {
             let subs_for_alarm = subscriptions.clone();
             let store_for_alarm: Option<Arc<EventStore>> = Some(event_store.clone());
             let source_for_alarm = events_source.clone();
-            let notifier: Arc<dyn Fn(&str, u16) + Send + Sync> =
-                Arc::new(move |message: &str, severity: u16| {
-                    super::events::notify_event(
-                        &subs_for_alarm,
-                        &store_for_alarm,
-                        &source_for_alarm,
-                        message,
-                        severity,
-                    );
-                });
+            let notifier: EventNotifier = Arc::new(move |message: &str, severity: u16| {
+                super::events::notify_event(
+                    &subs_for_alarm,
+                    &store_for_alarm,
+                    &source_for_alarm,
+                    message,
+                    severity,
+                );
+            });
             sim_engine.set_event_notifier(notifier).await;
         }
         sim_engine.start(sim_nm.clone(), subscriptions.clone());

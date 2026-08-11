@@ -751,11 +751,6 @@ async fn event_subscription_via_master() {
             .await
             .ok()
             .flatten();
-        if let Some(BackendEvent::CommLogEntries { entries, .. }) = &ev {
-            if !entries.is_empty() {
-                saw_log = true;
-            }
-        }
         if let Some(BackendEvent::EventItems { items, .. }) = ev {
             for it in &items {
                 if it.message.contains("master-test") {

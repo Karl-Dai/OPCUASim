@@ -15,6 +15,9 @@ use super::generator::generate_value;
 use super::history_store::HistoryStore;
 use super::models::{DataType, ServerNode, SimulationMode};
 
+/// Callback invoked by the engine to raise an event (message, severity).
+pub type EventNotifier = Arc<dyn Fn(&str, u16) + Send + Sync>;
+
 /// State for a single simulated node.
 #[derive(Clone)]
 struct NodeSimState {
@@ -37,7 +40,7 @@ pub struct SimulationEngine {
     current_values: Arc<RwLock<HashMap<String, (String, u64)>>>,
     history_store: Arc<RwLock<Option<Arc<HistoryStore>>>>,
     alarm_states: Arc<RwLock<HashMap<String, bool>>>,
-    event_notifier: Arc<RwLock<Option<Arc<dyn Fn(&str, u16) + Send + Sync>>>>,
+    event_notifier: Arc<RwLock<Option<EventNotifier>>>,
     custom_types: Arc<RwLock<HashMap<String, NodeId>>>,
 }
 
@@ -60,7 +63,7 @@ impl SimulationEngine {
         *self.history_store.write().await = Some(store);
     }
 
-    pub async fn set_event_notifier(&self, notifier: Arc<dyn Fn(&str, u16) + Send + Sync>) {
+    pub async fn set_event_notifier(&self, notifier: EventNotifier) {
         *self.event_notifier.write().await = Some(notifier);
     }
 

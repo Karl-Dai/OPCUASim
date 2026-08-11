@@ -5,9 +5,12 @@ use std::collections::{HashMap, VecDeque};
 use opcua_types::{DateTime, NodeId, Variant};
 use tokio::sync::RwLock;
 
+/// Per-source event buffer: node id → ring of (timestamp, field list).
+pub type EventBuffers = RwLock<HashMap<NodeId, VecDeque<(DateTime, Vec<Variant>)>>>;
+
 /// Per-source ring buffer of event field lists, oldest-first.
 pub struct EventStore {
-    buffers: RwLock<HashMap<NodeId, VecDeque<(DateTime, Vec<Variant>)>>>,
+    buffers: EventBuffers,
     capacity: usize,
 }
 

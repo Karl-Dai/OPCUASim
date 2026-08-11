@@ -110,13 +110,14 @@ async fn handle_cmd(
             };
             if let Some(nm) = state.server.node_manager().await {
                 let ns = state.server.namespace_index().await;
+                let custom_types = state.server.custom_types().await;
                 let mut addr = nm.address_space().write();
                 opcuasim_core::server::address_space::populate_address_space(
                     &mut addr,
                     ns,
                     std::slice::from_ref(&folder),
                     &[],
-                    &state.server.custom_types().await,
+                    &custom_types,
                 );
             }
             state.folders.write().unwrap().push(folder);
@@ -137,12 +138,13 @@ async fn handle_cmd(
             };
             if let Some(nm) = state.server.node_manager().await {
                 let ns = state.server.namespace_index().await;
+                let custom_types = state.server.custom_types().await;
                 let mut addr = nm.address_space().write();
                 opcuasim_core::server::address_space::add_variable_node(
                     &mut addr,
                     ns,
                     &node,
-                    &state.server.custom_types().await,
+                    &custom_types,
                 );
             }
             state.nodes.write().unwrap().push(node);
