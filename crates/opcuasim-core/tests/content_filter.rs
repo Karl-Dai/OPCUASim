@@ -250,7 +250,7 @@ async fn content_filter_cast_operator_returns_error() {
     let conn = Arc::new(OpcUaConnection::new(ConnectionConfig {
         id: "cf_cast".into(),
         name: "cf_cast".into(),
-        endpoint_url: format!("opc.tcp://127.0.0.1:{PORT}"),
+        endpoint_url: format!("opc.tcp://127.0.0.1:{PORT_CAST}"),
         security_policy: "None".into(),
         security_mode: "None".into(),
         auth: AuthConfig::Anonymous,
