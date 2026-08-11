@@ -16,13 +16,14 @@ use opcua_server::node_manager::{
 };
 use opcua_server::{ContinuationPoint, CreateMonitoredItem};
 use opcua_types::{
-    DataValue, DateTime, FilterOperator, HistoryData, HistoryEvent, HistoryEventFieldList,
-    MonitoringMode, NodeId, NumericRange, ReadAnnotationDataDetails, ReadAtTimeDetails,
-    ReadEventDetails, ReadProcessedDetails, ReadRawModifiedDetails, StatusCode, TimestampsToReturn,
-    Variant,
+    DataValue, DateTime, HistoryData, HistoryEvent, HistoryEventFieldList, MonitoringMode, NodeId,
+    NumericRange, ReadAnnotationDataDetails, ReadAtTimeDetails, ReadEventDetails,
+    ReadProcessedDetails, ReadRawModifiedDetails, StatusCode, TimestampsToReturn, Variant,
 };
 
+use super::aggregate;
 use super::event_store::EventStore;
+use super::filter;
 use super::history_store::HistoryStore;
 
 /// In-memory node manager with history support.
@@ -293,14 +294,76 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
 
     async fn history_read_processed(
         &self,
-        context: &RequestContext,
+        _context: &RequestContext,
         details: &ReadProcessedDetails,
         nodes: &mut [&mut &mut HistoryNode],
-        timestamps_to_return: TimestampsToReturn,
+        _timestamps_to_return: TimestampsToReturn,
     ) -> Result<(), StatusCode> {
-        self.inner
-            .history_read_processed(context, details, nodes, timestamps_to_return)
-            .await
+        // 取 aggregate_type 第一个 NodeId
+        let agg_type = details
+            .aggregate_type
+            .as_ref()
+            .and_then(|v| v.first())
+            .ok_or(StatusCode::BadHistoryOperationInvalid)?;
+
+        if !aggregate::aggregate_supported(agg_type) {
+            return Err(StatusCode::BadAggregateNotSupported);
+        }
+
+        if details.processing_interval <= 0.0 {
+            return Err(StatusCode::BadHistoryOperationInvalid);
+        }
+
+        for node in nodes.iter_mut() {
+            let node_id = node.node_id().clone();
+
+            let samples = self
+                .history
+                .query_samples(&node_id, details.start_time, details.end_time)
+                .await;
+
+            let skip = match node.continuation_point() {
+                Some(cp) => cp
+                    .get::<usize>()
+                    .copied()
+                    .ok_or(StatusCode::BadContinuationPointInvalid)?,
+                None => 0,
+            };
+
+            let aggregated = aggregate::aggregate_samples(
+                &samples,
+                details.start_time,
+                details.end_time,
+                details.processing_interval,
+                agg_type,
+            )
+            .map_err(|_| StatusCode::BadAggregateInvalidInputs)?;
+
+            // 分页: 每页最多 MAX_BUCKETS_PER_PAGE 个桶
+            const MAX_BUCKETS_PER_PAGE: usize = 10_000;
+            let total = aggregated.len();
+            let page: Vec<DataValue> = if skip < total {
+                let take = MAX_BUCKETS_PER_PAGE.min(total - skip);
+                aggregated[skip..skip + take].to_vec()
+            } else {
+                Vec::new()
+            };
+
+            let next_skip = if skip + page.len() < total {
+                Some(skip + page.len())
+            } else {
+                None
+            };
+
+            node.set_result(HistoryData {
+                data_values: Some(page),
+            });
+            node.set_next_continuation_point(
+                next_skip.map(|s| ContinuationPoint::new(Box::new(s))),
+            );
+            node.set_status(StatusCode::Good);
+        }
+        Ok(())
     }
 
     async fn history_read_at_time(
@@ -322,16 +385,7 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
         nodes: &mut [&mut &mut HistoryNode],
         _timestamps_to_return: TimestampsToReturn,
     ) -> Result<(), StatusCode> {
-        let field_names: &[&str] = &[
-            "EventId",
-            "EventType",
-            "SourceNode",
-            "SourceName",
-            "Time",
-            "ReceiveTime",
-            "Message",
-            "Severity",
-        ];
+        let field_names = filter::EVENT_FIELD_NAMES;
         let select_indices: Option<Vec<usize>> =
             details.filter.select_clauses.as_ref().map(|clauses| {
                 clauses
@@ -348,33 +402,6 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
                             .unwrap_or(usize::MAX)
                     })
                     .collect()
-            });
-
-        let filter_eq: Option<(usize, Variant)> = details
-            .filter
-            .where_clause
-            .elements
-            .as_ref()
-            .and_then(|elements| {
-                if elements.len() != 1 {
-                    return None;
-                }
-                let el = &elements[0];
-                if el.filter_operator != FilterOperator::Equals {
-                    return None;
-                }
-                let operands = el.filter_operands.as_ref()?;
-                if operands.len() != 2 {
-                    return None;
-                }
-                let sao = operands[0].inner_as::<opcua_types::SimpleAttributeOperand>()?;
-                let lit = operands[1].inner_as::<opcua_types::LiteralOperand>()?;
-                let field_idx = sao
-                    .browse_path
-                    .as_ref()
-                    .and_then(|path| path.last().map(|qn| qn.name.to_string()))
-                    .and_then(|name| field_names.iter().position(|n| *n == name))?;
-                Some((field_idx, lit.value.clone()))
             });
 
         for node in nodes.iter_mut() {
@@ -397,11 +424,12 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
                 )
                 .await;
 
-            if let Some((idx, ref expected)) = filter_eq {
-                events.retain(|(_, fields)| {
-                    fields.get(idx).is_some_and(|v| variants_match(v, expected))
-                });
-            }
+            // Evaluate where_clause per event.
+            let where_ref = &details.filter.where_clause;
+            events.retain(|(_, fields)| match &where_ref.elements {
+                Some(elements) => filter::eval_clauses(elements, fields).unwrap_or(false),
+                None => true,
+            });
 
             let field_lists: Vec<HistoryEventFieldList> = events
                 .into_iter()
@@ -521,25 +549,5 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
         self.inner
             .delete_references(context, address_space, references_to_delete)
             .await
-    }
-}
-
-fn variants_match(a: &Variant, b: &Variant) -> bool {
-    match (a, b) {
-        (Variant::Boolean(x), Variant::Boolean(y)) => x == y,
-        (Variant::Byte(x), Variant::Byte(y)) => x == y,
-        (Variant::SByte(x), Variant::SByte(y)) => x == y,
-        (Variant::Int16(x), Variant::Int16(y)) => x == y,
-        (Variant::UInt16(x), Variant::UInt16(y)) => x == y,
-        (Variant::Int32(x), Variant::Int32(y)) => x == y,
-        (Variant::UInt32(x), Variant::UInt32(y)) => x == y,
-        (Variant::Int64(x), Variant::Int64(y)) => x == y,
-        (Variant::UInt64(x), Variant::UInt64(y)) => x == y,
-        (Variant::Float(x), Variant::Float(y)) => x == y,
-        (Variant::Double(x), Variant::Double(y)) => x == y,
-        (Variant::String(x), Variant::String(y)) => x == y,
-        (Variant::ByteString(x), Variant::ByteString(y)) => x == y,
-        (Variant::NodeId(x), Variant::NodeId(y)) => x == y,
-        _ => format!("{a}") == format!("{b}"),
     }
 }

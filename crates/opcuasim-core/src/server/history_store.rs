@@ -78,6 +78,27 @@ impl HistoryStore {
             .map(|b| b.len())
             .unwrap_or(0)
     }
+
+    /// 返回节点在 [start, end] 区间内的全部样本(无分页, oldest-first)。
+    pub async fn query_samples(
+        &self,
+        node_id: &NodeId,
+        start: DateTime,
+        end: DateTime,
+    ) -> Vec<DataValue> {
+        let buffers = self.buffers.read().await;
+        let Some(buf) = buffers.get(node_id) else {
+            return Vec::new();
+        };
+        buf.iter()
+            .filter(|dv| {
+                sample_time(dv)
+                    .map(|t| t >= start && t <= end)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect()
+    }
 }
 
 /// Extract the sample timestamp: source_timestamp, falling back to
@@ -171,6 +192,36 @@ mod tests {
         assert_eq!(store.len(&id).await, 0);
         let (vals, _) = store
             .query(&id, DateTime::epoch(), DateTime::endtimes(), 10, 0)
+            .await;
+        assert!(vals.is_empty());
+    }
+
+    #[tokio::test]
+    async fn query_samples_returns_full_range() {
+        let store = HistoryStore::new(100);
+        let id = NodeId::new(2, "A");
+        for i in 0..10i64 {
+            store.record(&id, dv(1000 + i * 100, i)).await;
+        }
+        let vals = store.query_samples(&id, dt(1200), dt(1500)).await;
+        assert_eq!(vals.len(), 4); // ts 1200,1300,1400,1500
+                                   // Verify oldest-first order
+        assert_eq!(
+            vals[0].value.as_ref().map(|v| format!("{v}")),
+            Some("2".into())
+        );
+        assert_eq!(
+            vals[3].value.as_ref().map(|v| format!("{v}")),
+            Some("5".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn query_samples_empty_for_nonexistent_node() {
+        let store = HistoryStore::new(100);
+        let id = NodeId::new(2, "B");
+        let vals = store
+            .query_samples(&id, DateTime::epoch(), DateTime::endtimes())
             .await;
         assert!(vals.is_empty());
     }
