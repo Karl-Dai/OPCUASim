@@ -11,6 +11,7 @@ use opcua_types::{
 };
 
 use crate::error::OpcUaSimError;
+use crate::values::variant_to_f64;
 
 #[derive(Debug, Clone)]
 pub struct HistoryDataPoint {
@@ -253,24 +254,6 @@ fn map_data_value(dv: DataValue) -> HistoryDataPoint {
         value: value_str,
         numeric,
         status,
-    }
-}
-
-fn variant_to_f64(v: &opcua_types::Variant) -> Option<f64> {
-    use opcua_types::Variant;
-    match v {
-        Variant::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
-        Variant::SByte(x) => Some(*x as f64),
-        Variant::Byte(x) => Some(*x as f64),
-        Variant::Int16(x) => Some(*x as f64),
-        Variant::UInt16(x) => Some(*x as f64),
-        Variant::Int32(x) => Some(*x as f64),
-        Variant::UInt32(x) => Some(*x as f64),
-        Variant::Int64(x) => Some(*x as f64),
-        Variant::UInt64(x) => Some(*x as f64),
-        Variant::Float(x) => Some(*x as f64),
-        Variant::Double(x) => Some(*x),
-        _ => None,
     }
 }
 

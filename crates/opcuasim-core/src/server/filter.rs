@@ -5,6 +5,8 @@ use std::cmp::Ordering;
 
 use opcua_types::{ContentFilterElement, ExtensionObject, FilterOperator, StatusCode, Variant};
 
+use crate::values::variant_to_f64;
+
 /// Event field names used both by the filter evaluator and by
 /// [`crate::server::history_node_manager`].
 pub const EVENT_FIELD_NAMES: &[&str] = &[
@@ -35,26 +37,35 @@ pub fn eval_clauses(
         return Ok(true);
     }
     for el in elements {
-        if !eval_element(el, fields)? {
+        if !eval_element_depth(el, fields, 0)? {
             return Ok(false);
         }
     }
     Ok(true)
 }
 
-/// Recursively evaluate a single [`ContentFilterElement`].
-fn eval_element(el: &ContentFilterElement, fields: &[Variant]) -> Result<bool, StatusCode> {
+/// Depth-limited recursive evaluation of a single [`ContentFilterElement`].
+const MAX_FILTER_DEPTH: usize = 64;
+
+fn eval_element_depth(
+    el: &ContentFilterElement,
+    fields: &[Variant],
+    depth: usize,
+) -> Result<bool, StatusCode> {
+    if depth > MAX_FILTER_DEPTH {
+        return Err(StatusCode::BadFilterOperandInvalid);
+    }
     let operands = el.filter_operands.as_deref().unwrap_or(&[]);
     let op = el.filter_operator;
 
     match op {
         // Unary operators
         FilterOperator::IsNull => {
-            let v = resolve_operand(operands, 0, fields)?;
+            let v = resolve_operand(operands, 0, fields, depth)?;
             Ok(matches!(v, Variant::Empty))
         }
         FilterOperator::Not => {
-            let v = resolve_operand(operands, 0, fields)?;
+            let v = resolve_operand(operands, 0, fields, depth)?;
             let b = variant_to_bool(&v)?;
             Ok(!b)
         }
@@ -65,15 +76,15 @@ fn eval_element(el: &ContentFilterElement, fields: &[Variant]) -> Result<bool, S
         | FilterOperator::LessThan
         | FilterOperator::GreaterThanOrEqual
         | FilterOperator::LessThanOrEqual => {
-            let a = resolve_operand(operands, 0, fields)?;
-            let b = resolve_operand(operands, 1, fields)?;
+            let a = resolve_operand(operands, 0, fields, depth)?;
+            let b = resolve_operand(operands, 1, fields, depth)?;
             compare(&a, &b, op)
         }
 
         // Like — string pattern matching
         FilterOperator::Like => {
-            let field_val = resolve_operand(operands, 0, fields)?;
-            let pat_val = resolve_operand(operands, 1, fields)?;
+            let field_val = resolve_operand(operands, 0, fields, depth)?;
+            let pat_val = resolve_operand(operands, 1, fields, depth)?;
             let s = variant_to_string(&field_val)?;
             let pat = variant_to_string(&pat_val)?;
             Ok(like_match(&s, &pat))
@@ -81,13 +92,13 @@ fn eval_element(el: &ContentFilterElement, fields: &[Variant]) -> Result<bool, S
 
         // And / Or — logical on two sub-expressions
         FilterOperator::And => {
-            let a = resolve_bool_operand(operands, 0, fields)?;
-            let b = resolve_bool_operand(operands, 1, fields)?;
+            let a = resolve_bool_operand(operands, 0, fields, depth)?;
+            let b = resolve_bool_operand(operands, 1, fields, depth)?;
             Ok(a && b)
         }
         FilterOperator::Or => {
-            let a = resolve_bool_operand(operands, 0, fields)?;
-            let b = resolve_bool_operand(operands, 1, fields)?;
+            let a = resolve_bool_operand(operands, 0, fields, depth)?;
+            let b = resolve_bool_operand(operands, 1, fields, depth)?;
             Ok(a || b)
         }
 
@@ -96,9 +107,9 @@ fn eval_element(el: &ContentFilterElement, fields: &[Variant]) -> Result<bool, S
             if operands.len() < 3 {
                 return Err(StatusCode::BadFilterOperandInvalid);
             }
-            let field_val = resolve_operand(operands, 0, fields)?;
-            let lower = resolve_operand(operands, 1, fields)?;
-            let upper = resolve_operand(operands, 2, fields)?;
+            let field_val = resolve_operand(operands, 0, fields, depth)?;
+            let lower = resolve_operand(operands, 1, fields, depth)?;
+            let upper = resolve_operand(operands, 2, fields, depth)?;
             let ge_lower = compare(&field_val, &lower, FilterOperator::GreaterThanOrEqual)?;
             let le_upper = compare(&field_val, &upper, FilterOperator::LessThanOrEqual)?;
             Ok(ge_lower && le_upper)
@@ -109,9 +120,9 @@ fn eval_element(el: &ContentFilterElement, fields: &[Variant]) -> Result<bool, S
             if operands.len() < 2 {
                 return Err(StatusCode::BadFilterOperandInvalid);
             }
-            let field_val = resolve_operand(operands, 0, fields)?;
+            let field_val = resolve_operand(operands, 0, fields, depth)?;
             for operand in &operands[1..] {
-                let candidate = operand_variant(operand, fields)?;
+                let candidate = operand_variant(operand, fields, depth)?;
                 if compare(&field_val, &candidate, FilterOperator::Equals)? {
                     return Ok(true);
                 }
@@ -164,7 +175,17 @@ fn compare_variants(a: &Variant, b: &Variant) -> Result<Ordering, StatusCode> {
 
 /// Simple LIKE wildcard matching: `%` matches any number of characters,
 /// `_` matches exactly one character.
+///
+/// Rejects inputs exceeding reasonable limits to prevent O(m×n) memory
+/// amplification from attacker-controlled strings.
 pub fn like_match(s: &str, pat: &str) -> bool {
+    const MAX_PAT_LEN: usize = 256;
+    const MAX_STR_LEN: usize = 4096;
+
+    if pat.len() > MAX_PAT_LEN || s.len() > MAX_STR_LEN {
+        return false;
+    }
+
     let s_bytes = s.as_bytes();
     let pat_bytes = pat.as_bytes();
     let n = s_bytes.len();
@@ -208,10 +229,6 @@ pub fn like_match(s: &str, pat: &str) -> bool {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
 /// Resolve an [`ExtensionObject`] operand to a [`Variant`].
 ///
 /// - [`SimpleAttributeOperand`] → field value (by browse-path name → index).
@@ -221,6 +238,7 @@ pub fn like_match(s: &str, pat: &str) -> bool {
 pub(crate) fn operand_variant(
     operand: &ExtensionObject,
     fields: &[Variant],
+    depth: usize,
 ) -> Result<Variant, StatusCode> {
     // Try SimpleAttributeOperand → field value by name.
     if let Some(sao) = operand.inner_as::<opcua_types::SimpleAttributeOperand>() {
@@ -245,7 +263,7 @@ pub(crate) fn operand_variant(
     }
     // Try ContentFilterElement → recursive evaluation (returns boolean).
     else if let Some(sub) = operand.inner_as::<ContentFilterElement>() {
-        eval_element(sub, fields).map(Variant::Boolean)
+        eval_element_depth(sub, fields, depth + 1).map(Variant::Boolean)
     } else {
         Err(StatusCode::BadFilterOperandInvalid)
     }
@@ -256,11 +274,12 @@ fn resolve_operand(
     operands: &[ExtensionObject],
     index: usize,
     fields: &[Variant],
+    depth: usize,
 ) -> Result<Variant, StatusCode> {
     operands
         .get(index)
         .ok_or(StatusCode::BadFilterOperandInvalid)
-        .and_then(|eo| operand_variant(eo, fields))
+        .and_then(|eo| operand_variant(eo, fields, depth))
 }
 
 /// Resolve a boolean operand (for And/Or sub-expressions).
@@ -268,8 +287,9 @@ fn resolve_bool_operand(
     operands: &[ExtensionObject],
     index: usize,
     fields: &[Variant],
+    depth: usize,
 ) -> Result<bool, StatusCode> {
-    let v = resolve_operand(operands, index, fields)?;
+    let v = resolve_operand(operands, index, fields, depth)?;
     variant_to_bool(&v)
 }
 
@@ -284,25 +304,9 @@ fn variant_to_bool(v: &Variant) -> Result<bool, StatusCode> {
 fn variant_to_string(v: &Variant) -> Result<String, StatusCode> {
     match v {
         Variant::String(s) => Ok(s.as_ref().to_string()),
+        Variant::LocalizedText(lt) => Ok(lt.text.to_string()),
         Variant::Empty => Ok(String::new()),
         _ => Err(StatusCode::BadFilterOperandInvalid),
-    }
-}
-
-fn variant_to_f64(v: &Variant) -> Option<f64> {
-    match v {
-        Variant::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
-        Variant::SByte(x) => Some(*x as f64),
-        Variant::Byte(x) => Some(*x as f64),
-        Variant::Int16(x) => Some(*x as f64),
-        Variant::UInt16(x) => Some(*x as f64),
-        Variant::Int32(x) => Some(*x as f64),
-        Variant::UInt32(x) => Some(*x as f64),
-        Variant::Int64(x) => Some(*x as f64),
-        Variant::UInt64(x) => Some(*x as f64),
-        Variant::Float(x) => Some(*x as f64),
-        Variant::Double(x) => Some(*x),
-        _ => None,
     }
 }
 
@@ -369,21 +373,21 @@ mod tests {
     #[test]
     fn operand_variant_known_field() {
         let fields = event_fields();
-        let v = operand_variant(&sao("Message"), &fields).unwrap();
+        let v = operand_variant(&sao("Message"), &fields, 0).unwrap();
         assert_eq!(v, Variant::String("hello world".into()));
     }
 
     #[test]
     fn operand_variant_unknown_field() {
         let fields = event_fields();
-        let result = operand_variant(&sao("NoSuchField"), &fields);
+        let result = operand_variant(&sao("NoSuchField"), &fields, 0);
         assert!(result.is_err());
     }
 
     #[test]
     fn operand_variant_literal() {
         let fields = event_fields();
-        let v = operand_variant(&lit(Variant::Int32(42)), &fields).unwrap();
+        let v = operand_variant(&lit(Variant::Int32(42)), &fields, 0).unwrap();
         assert_eq!(v, Variant::Int32(42));
     }
 
@@ -780,5 +784,116 @@ mod tests {
             FilterOperator::Equals,
         )
         .unwrap());
+    }
+
+    // ------------------------------------------------------------------
+    // like_match length limits (DoS prevention)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn like_match_rejects_overlong_pattern() {
+        let pat = "a".repeat(300); // > MAX_PAT_LEN (256)
+        assert!(!like_match("hello", &pat));
+    }
+
+    #[test]
+    fn like_match_rejects_overlong_string() {
+        let s = "x".repeat(5000); // > MAX_STR_LEN (4096)
+        assert!(!like_match(&s, "hello%"));
+    }
+
+    #[test]
+    fn like_match_accepts_max_lengths() {
+        let pat = "a".repeat(256);
+        let s = "b".repeat(4096);
+        // Should not panic and should return a boolean result quickly.
+        let result = like_match(&s, &pat);
+        // 256-char pattern of all 'a' won't match 4096-char string of all 'b'.
+        assert!(!result);
+    }
+
+    #[test]
+    fn like_match_short_inputs_still_work() {
+        assert!(like_match("hello", "h%o"));
+        assert!(!like_match("hello", "x%"));
+    }
+
+    // ------------------------------------------------------------------
+    // eval_clauses depth limit (stack overflow prevention)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn eval_clauses_rejects_deeply_nested_filter() {
+        // Build a 128-level deep nested ContentFilterElement chain.
+        // Each level: And(sub_el, lit(true)), inner sub_el wraps the next level.
+        // Innermost: Equals(sao("Message"), lit("hello world")).
+        let inner = sub_el(
+            FilterOperator::Equals,
+            vec![sao("Message"), lit(Variant::String("hello world".into()))],
+        );
+        let mut current = inner;
+        for _ in 0..128 {
+            current = sub_el(
+                FilterOperator::And,
+                vec![current, lit(Variant::Boolean(true))],
+            );
+        }
+        let clause = vec![ContentFilterElement {
+            filter_operator: FilterOperator::And,
+            filter_operands: Some(vec![current]),
+        }];
+        let fields = event_fields();
+        let result = eval_clauses(&clause, &fields);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), StatusCode::BadFilterOperandInvalid);
+    }
+
+    #[test]
+    fn eval_clauses_shallow_nesting_works() {
+        // 3 levels deep should be fine.
+        let inner = sub_el(
+            FilterOperator::Equals,
+            vec![sao("Message"), lit(Variant::String("hello world".into()))],
+        );
+        let mut current = inner;
+        for _ in 0..3 {
+            current = sub_el(
+                FilterOperator::And,
+                vec![current, lit(Variant::Boolean(true))],
+            );
+        }
+        // The outermost sub_el is already an And, so wrap it as a clause element.
+        // But ContentFilterElement needs filter_operator and filter_operands.
+        // We extract the And ContentFilterElement from the ExtensionObject directly.
+        let element: ContentFilterElement = current
+            .inner_as::<ContentFilterElement>()
+            .cloned()
+            .expect("must be a ContentFilterElement");
+        let clause = vec![element];
+        let fields = event_fields();
+        let result = eval_clauses(&clause, &fields);
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    // ------------------------------------------------------------------
+    // eval_clauses error propagation (Cast operator → Err)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn eval_clauses_cast_in_deeply_nested_structure_returns_err() {
+        // A Cast operator nested inside And should propagate the error up.
+        let inner = sub_el(FilterOperator::Cast, vec![sao("Severity")]);
+        let wrapped = sub_el(
+            FilterOperator::And,
+            vec![inner, lit(Variant::Boolean(true))],
+        );
+        let clause = vec![ContentFilterElement {
+            filter_operator: FilterOperator::And,
+            filter_operands: Some(vec![wrapped]),
+        }];
+        let fields = event_fields();
+        let result = eval_clauses(&clause, &fields);
+        assert!(result.is_err());
     }
 }

@@ -14,13 +14,16 @@ use opcuasim_core::history::history_read_events;
 use opcuasim_core::server::models::{DataType, ServerConfig, ServerNode, SimulationMode};
 use opcuasim_core::server::server::OpcUaServer;
 
+/// Distinct ports per test: the two e2e tests run in parallel (cargo test
+/// default thread count), so a shared port would race on bind.
 const PORT: u16 = 48441;
+const PORT_CAST: u16 = 48442;
 
-fn server_config() -> ServerConfig {
+fn server_config(port: u16) -> ServerConfig {
     ServerConfig {
         name: "ContentFilterE2E".into(),
-        endpoint_url: format!("opc.tcp://127.0.0.1:{PORT}"),
-        port: PORT,
+        endpoint_url: format!("opc.tcp://127.0.0.1:{port}"),
+        port,
         security_policies: vec!["None".into()],
         security_modes: vec!["None".into()],
         users: Vec::new(),
@@ -100,7 +103,7 @@ async fn content_filter_where_clause_e2e() {
 
     let server = Arc::new(OpcUaServer::new());
     server
-        .start(&server_config(), &[], &[sine_node()])
+        .start(&server_config(PORT), &[], &[sine_node()])
         .await
         .expect("server start");
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -227,4 +230,65 @@ async fn content_filter_where_clause_e2e() {
     server.stop().await.expect("server stop");
 
     println!("\n=== content_filter_where_clause_e2e PASSED ===");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn content_filter_cast_operator_returns_error() {
+    let _ = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,opcua=warn"),
+    )
+    .is_test(true)
+    .try_init();
+
+    let server = Arc::new(OpcUaServer::new());
+    server
+        .start(&server_config(PORT_CAST), &[], &[sine_node()])
+        .await
+        .expect("server start");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let conn = Arc::new(OpcUaConnection::new(ConnectionConfig {
+        id: "cf_cast".into(),
+        name: "cf_cast".into(),
+        endpoint_url: format!("opc.tcp://127.0.0.1:{PORT}"),
+        security_policy: "None".into(),
+        security_mode: "None".into(),
+        auth: AuthConfig::Anonymous,
+        timeout_ms: 10_000,
+    }));
+    conn.connect().await.expect("connect");
+    let session = conn.get_session().await.expect("session");
+
+    let demo_events_id: NodeId = "ns=2;s=DemoEvents".parse().unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let start_past = opcua_types::DateTime::ymd_hms(2020, 1, 1, 0, 0, 0);
+    let end = opcua_types::DateTime::now();
+
+    // Filter with Cast operator (unsupported) — must return error, not empty list.
+    let cast_filter = make_event_filter(ContentFilter {
+        elements: Some(vec![ContentFilterElement {
+            filter_operator: FilterOperator::Cast,
+            filter_operands: Some(vec![sao_ext("Severity")]),
+        }]),
+    });
+    let result = history_read_events(
+        &session,
+        &demo_events_id,
+        start_past,
+        end,
+        1000,
+        cast_filter,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "Cast filter should return error, not empty list"
+    );
+
+    conn.disconnect().await.expect("disconnect");
+    server.stop().await.expect("server stop");
+
+    println!("\n=== content_filter_cast_operator_returns_error PASSED ===");
 }

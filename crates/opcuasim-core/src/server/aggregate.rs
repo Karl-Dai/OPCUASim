@@ -6,28 +6,7 @@
 use chrono::Duration as ChronoDuration;
 use opcua_types::{DataValue, DateTime, NodeId, ObjectId, StatusCode, Variant};
 
-// ---------------------------------------------------------------------------
-// Variant → f64 转换
-// ---------------------------------------------------------------------------
-
-/// 将 Variant 转换为 f64,不可转换的类型返回 None。
-/// 与 `crate::history::variant_to_f64` 保持一致的匹配逻辑。
-fn variant_to_f64(v: &Variant) -> Option<f64> {
-    match v {
-        Variant::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
-        Variant::SByte(x) => Some(*x as f64),
-        Variant::Byte(x) => Some(*x as f64),
-        Variant::Int16(x) => Some(*x as f64),
-        Variant::UInt16(x) => Some(*x as f64),
-        Variant::Int32(x) => Some(*x as f64),
-        Variant::UInt32(x) => Some(*x as f64),
-        Variant::Int64(x) => Some(*x as f64),
-        Variant::UInt64(x) => Some(*x as f64),
-        Variant::Float(x) => Some(*x as f64),
-        Variant::Double(x) => Some(*x),
-        _ => None,
-    }
-}
+use crate::values::variant_to_f64;
 
 // ---------------------------------------------------------------------------
 // 状态判断
@@ -64,34 +43,44 @@ pub fn aggregate_supported(agg_type: &NodeId) -> bool {
 
 /// 获取聚合类型的 ObjectId (用于内部匹配),不支持的返回 None。
 fn agg_object_id(agg_type: &NodeId) -> Option<ObjectId> {
-    let average: NodeId = NodeId::from(ObjectId::AggregateFunction_Average);
-    let minimum: NodeId = NodeId::from(ObjectId::AggregateFunction_Minimum);
-    let maximum: NodeId = NodeId::from(ObjectId::AggregateFunction_Maximum);
-    let count: NodeId = NodeId::from(ObjectId::AggregateFunction_Count);
-    let time_avg: NodeId = NodeId::from(ObjectId::AggregateFunction_TimeAverage);
-    let total: NodeId = NodeId::from(ObjectId::AggregateFunction_Total);
-    let delta: NodeId = NodeId::from(ObjectId::AggregateFunction_Delta);
-    let percent_good: NodeId = NodeId::from(ObjectId::AggregateFunction_PercentGood);
-
-    if *agg_type == average {
-        Some(ObjectId::AggregateFunction_Average)
-    } else if *agg_type == minimum {
-        Some(ObjectId::AggregateFunction_Minimum)
-    } else if *agg_type == maximum {
-        Some(ObjectId::AggregateFunction_Maximum)
-    } else if *agg_type == count {
-        Some(ObjectId::AggregateFunction_Count)
-    } else if *agg_type == time_avg {
-        Some(ObjectId::AggregateFunction_TimeAverage)
-    } else if *agg_type == total {
-        Some(ObjectId::AggregateFunction_Total)
-    } else if *agg_type == delta {
-        Some(ObjectId::AggregateFunction_Delta)
-    } else if *agg_type == percent_good {
-        Some(ObjectId::AggregateFunction_PercentGood)
-    } else {
-        None
-    }
+    let pairs: [(ObjectId, NodeId); 8] = [
+        (
+            ObjectId::AggregateFunction_Average,
+            NodeId::from(ObjectId::AggregateFunction_Average),
+        ),
+        (
+            ObjectId::AggregateFunction_Minimum,
+            NodeId::from(ObjectId::AggregateFunction_Minimum),
+        ),
+        (
+            ObjectId::AggregateFunction_Maximum,
+            NodeId::from(ObjectId::AggregateFunction_Maximum),
+        ),
+        (
+            ObjectId::AggregateFunction_Count,
+            NodeId::from(ObjectId::AggregateFunction_Count),
+        ),
+        (
+            ObjectId::AggregateFunction_TimeAverage,
+            NodeId::from(ObjectId::AggregateFunction_TimeAverage),
+        ),
+        (
+            ObjectId::AggregateFunction_Total,
+            NodeId::from(ObjectId::AggregateFunction_Total),
+        ),
+        (
+            ObjectId::AggregateFunction_Delta,
+            NodeId::from(ObjectId::AggregateFunction_Delta),
+        ),
+        (
+            ObjectId::AggregateFunction_PercentGood,
+            NodeId::from(ObjectId::AggregateFunction_PercentGood),
+        ),
+    ];
+    pairs
+        .iter()
+        .find(|(_, nid)| nid == agg_type)
+        .map(|(oid, _)| *oid)
 }
 
 // ---------------------------------------------------------------------------
@@ -126,10 +115,28 @@ pub fn aggregate_samples(
 
     let interval = ChronoDuration::milliseconds((processing_interval * 1000.0) as i64);
 
-    let mut results: Vec<DataValue> = Vec::new();
+    // Guard against truncation to 0 ms (e.g. processing_interval = 1e-10 → 0 ms).
+    if interval.num_milliseconds() == 0 {
+        return Err(StatusCode::BadHistoryOperationInvalid);
+    }
+
+    // Guard against unbounded bucket count (DoS).
+    const MAX_BUCKETS: usize = 1_000_000;
+    let total_span = end - start;
+    let total_ms = total_span.num_milliseconds();
+    if total_ms > 0 && total_ms as u64 / interval.num_milliseconds() as u64 > MAX_BUCKETS as u64 {
+        return Err(StatusCode::BadHistoryOperationInvalid);
+    }
+
+    let mut results: Vec<DataValue> = Vec::with_capacity(MAX_BUCKETS.min(1024));
     let mut bucket_start = start;
+    let mut bucket_count: usize = 0;
 
     while bucket_start < end {
+        bucket_count += 1;
+        if bucket_count > MAX_BUCKETS {
+            return Err(StatusCode::BadHistoryOperationInvalid);
+        }
         let bucket_end = bucket_start + interval;
 
         // 收集落在 [bucket_start, bucket_end) 内的样本
@@ -783,5 +790,66 @@ mod tests {
         );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), StatusCode::BadHistoryOperationInvalid);
+    }
+
+    #[test]
+    fn interval_truncated_to_zero_returns_error() {
+        // processing_interval = 0.0001 → *1000 → 0.1 → truncated to 0 ms.
+        let samples = vec![dv_int(10, 10)];
+        let result = aggregate_samples(
+            &samples,
+            dt(0),
+            dt(60),
+            0.0001,
+            &agg_id(ObjectId::AggregateFunction_Average),
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), StatusCode::BadHistoryOperationInvalid);
+    }
+
+    #[test]
+    fn interval_at_least_1ms_is_accepted() {
+        // processing_interval = 0.001 → 1 ms → valid.
+        let samples = vec![dv_int(10, 10)];
+        let result = aggregate_samples(
+            &samples,
+            dt(0),
+            dt(60),
+            0.001,
+            &agg_id(ObjectId::AggregateFunction_Average),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn excessive_bucket_count_returns_error() {
+        // 100-year span with 1-second interval → ~3.15 billion buckets → rejected.
+        let samples = vec![dv_int(0, 10)];
+        let start = dt(0);
+        let end = DateTime::ymd_hms(2126, 1, 1, 0, 0, 0);
+        let result = aggregate_samples(
+            &samples,
+            start,
+            end,
+            1.0,
+            &agg_id(ObjectId::AggregateFunction_Average),
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), StatusCode::BadHistoryOperationInvalid);
+    }
+
+    #[test]
+    fn normal_bucket_count_accepted() {
+        // 120-second span with 60-second interval → 2 buckets → accepted.
+        let samples = vec![dv_int(10, 10), dv_int(20, 20)];
+        let result = aggregate_samples(
+            &samples,
+            dt(0),
+            dt(120),
+            60.0,
+            &agg_id(ObjectId::AggregateFunction_Average),
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
     }
 }

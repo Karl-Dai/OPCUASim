@@ -424,12 +424,18 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
                 )
                 .await;
 
-            // Evaluate where_clause per event.
+            // Evaluate where_clause per event — propagate errors instead of silently
+            // filtering all events on a bad filter expression.
             let where_ref = &details.filter.where_clause;
-            events.retain(|(_, fields)| match &where_ref.elements {
-                Some(elements) => filter::eval_clauses(elements, fields).unwrap_or(false),
-                None => true,
-            });
+            if let Some(elements) = &where_ref.elements {
+                let mut filtered = Vec::with_capacity(events.len());
+                for (time, fields) in events {
+                    if filter::eval_clauses(elements, &fields)? {
+                        filtered.push((time, fields));
+                    }
+                }
+                events = filtered;
+            }
 
             let field_lists: Vec<HistoryEventFieldList> = events
                 .into_iter()

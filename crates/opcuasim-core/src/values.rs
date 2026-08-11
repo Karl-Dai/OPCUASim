@@ -3,6 +3,25 @@
 use opcua_types::custom::DynamicStructure;
 use opcua_types::{Array, Variant};
 
+/// 将 Variant 转换为 f64,不可转换的类型返回 None。
+/// Boolean → 0.0/1.0,所有数值类型 → f64。
+pub(crate) fn variant_to_f64(v: &Variant) -> Option<f64> {
+    match v {
+        Variant::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
+        Variant::SByte(x) => Some(*x as f64),
+        Variant::Byte(x) => Some(*x as f64),
+        Variant::Int16(x) => Some(*x as f64),
+        Variant::UInt16(x) => Some(*x as f64),
+        Variant::Int32(x) => Some(*x as f64),
+        Variant::UInt32(x) => Some(*x as f64),
+        Variant::Int64(x) => Some(*x as f64),
+        Variant::UInt64(x) => Some(*x as f64),
+        Variant::Float(x) => Some(*x as f64),
+        Variant::Double(x) => Some(*x),
+        _ => None,
+    }
+}
+
 /// 单棵树节点:字段名/元素索引 + 显示文本 + 子节点。
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreeNode {
