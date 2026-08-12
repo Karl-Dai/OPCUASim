@@ -4,25 +4,57 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-08-12
 
-### Fixed
+### Highlights / 亮点
 
-- Master auto-reconnect now actually re-establishes the session and restores subscriptions/polling after a drop
-- Polling mode now performs real OPC UA reads at the configured interval
-- Browse fully follows continuation points (no more truncated reference lists)
-- History reads release pending continuation points on early exit
-- Server variables expose an `EURange` property, enabling percent deadband filters
+- 🕘 **聚合历史读取** / OPC UA aggregated history reads (Average / Max / Min / Count / TimeAverage …) via `processing_interval`, served from the in-memory history store.
+- 🔍 **内容过滤求值** / Server now evaluates `ContentFilter` `where_clause`s on history reads — comparison, `Like`, `InList` — with depth and length hardening.
+- 🌳 **主站复杂类型字段树** / Master inspector renders `Structure` / `DynamicStructure` / arrays / enums as an expandable field tree, no more opaque "Variant" blobs.
+- 🚨 **事件与告警系统** / Server raises events (threshold alarms, method-triggered, heartbeat, connection-state), readable via event history; master gets an event subscription panel.
+- 🔐 **安全加固** / DoS hardening: LIKE pattern/string length caps, filter recursion depth limit, aggregate bucket caps, 0 ms interval rejection, filter errors propagated instead of silently dropped.
+- 🧪 **CI 管线 + 测试翻倍** / New GitHub Actions CI (fmt + clippy -D warnings + tests); test suite grew from 28 to 121, zero failures.
 
-### Added
+### Added 新增
 
-- Server: events/alarms (threshold, method-triggered, heartbeat, connection-state) with event history read
-- Server: complex data types (arrays, 2D arrays, enums, nested structures)
-- Master: event subscription panel
-- Editable EU Range (low/high) for server variables in the property editor
-- Server: in-memory history buffer with HistoryRead support (simulated and externally written values, paged continuation points)
-- Server: preset demo methods (Echo / Add / RandomValue / SetNodeValue) callable from any client
-- Server UI: configurable per-node history buffer capacity (0 = disabled)
+- Server: aggregated history reads with `processing_interval` (bucketed Average/Max/Min/Count/TimeAverage …), bounded by `MAX_BUCKETS` / 服务端聚合历史读取，支持 `processing_interval` 分桶聚合，受桶数上限保护.
+- Server: `ContentFilter`/`where_clause` evaluation on event-history reads (comparison, `Like`, `InList`, nesting up to depth 64) / 服务端在事件历史读取时求值 `ContentFilter` where_clause（比较、Like、InList，嵌套深度限制 64）.
+- Core: `variant_to_tree` — structured `Variant` → `TreeNode` conversion for complex types / 结构化 Variant → TreeNode 转换,支撑主站字段树.
+- Master: history tab with three read modes — raw / aggregate / events / 主站历史页三模式:原始 / 聚合 / 事件.
+- Master: complex-type values render as recursive field trees in the value panel and data table (with 📂 popup) / 主站详情面板与数据表将复杂类型值渲染为递归字段树(含 📂 弹窗).
+- Server: events/alarms (threshold, method-triggered, heartbeat, connection-state) with event history read / 服务端事件/告警(越限、方法触发、心跳、连接状态)与事件历史读取.
+- Server: complex data types (arrays, 2D arrays, enums, nested structures) with simulation / 服务端复杂数据类型(数组、二维数组、枚举、嵌套结构)及仿真支持.
+- Master: event subscription panel / 主站事件订阅面板.
+- Server: in-memory history buffer with HistoryRead support and paged continuation points / 服务端内存历史缓冲,支持 HistoryRead 与分页续读.
+- Server: preset demo methods (Echo / Add / RandomValue / SetNodeValue) callable from any client / 服务端预置演示方法(Echo / Add / RandomValue / SetNodeValue),任意客户端可调用.
+- Server UI: editable EU Range (low/high) + per-node history buffer capacity (0 = disabled) / 服务端 UI:可编辑 EU Range + 每节点历史缓冲容量配置.
+
+### Changed 改进
+
+- Server variables expose an `EURange` property, enabling percent deadband filters / 服务端变量暴露 `EURange` 属性,支持百分比死区过滤.
+- Filter evaluation errors now propagate to the client as `StatusCode` instead of silently returning an empty result / 过滤求值错误现在以 `StatusCode` 传播给客户端,不再静默返回空结果.
+- Client `HistoryRead` wrapper: `processing_interval` + aggregate details + event-field selection, cast/aggregate errors surface properly / 客户端 HistoryRead 封装支持聚合参数与事件字段选择,错误正确上抛.
+- Duplicated `variant_to_f64` consolidated into `values.rs` / 重复的 `variant_to_f64` 合并至 `values.rs`.
+
+### Fixed 修复
+
+- Master auto-reconnect now actually re-establishes the session and restores subscriptions/polling after a drop / 主站断线后真正重连会话并恢复订阅/轮询.
+- Polling mode now performs real OPC UA reads at the configured interval / 轮询模式真正按间隔执行 OPC UA 读取.
+- Browse fully follows continuation points (no more truncated reference lists) / 浏览完整跟随续读点,不再截断引用列表.
+- History reads release pending continuation points on early exit / 提前退出时释放挂起的续读点.
+- e2e suites given unique ports to eliminate parallel `AddrInUse` race (content_filter vs complex_types, aggregates vs methods) / e2e 测试端口去重,消除并行 AddrInUse 竞态.
+
+### Security 安全
+
+- LIKE pattern/string length caps (`MAX_PAT_LEN` 256 B / `MAX_STR_LEN` 4 KB) bound the O(m×n) DP table / Like 模式/字符串长度上限约束 DP 表内存.
+- Filter element recursion capped at depth 64 to prevent stack overflow / 过滤元素递归深度上限 64,防止栈溢出.
+- `processing_interval` truncating to 0 ms is rejected (would spin forever); total buckets capped at 1_000_000 before allocation / 0ms 截断的聚合间隔被拒绝;桶数分配前上限 100 万.
+- All mitigations target the default-bind `0.0.0.0:4840`, unauthenticated server surface / 防护覆盖默认 0.0.0.0:4840 未认证暴露面.
+
+### Internal
+
+- Added GitHub Actions `ci.yml`: fmt --check + clippy --workspace --all-targets -D warnings + cargo test on push/PR / 新增 CI 管线:fmt + clippy -D warnings + 全量测试.
+- Test suite: 121 tests, 0 failures (lib unit 91 + server complex types/aggregates/content-filter/variant-tree/methods/events e2e) / 测试套件 121 个全绿(核心单测 91 + 各 e2e).
 
 ## [0.4.0] - 2026-05-02
 
