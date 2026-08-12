@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-08-12
+
+### Highlights / 亮点
+
+- Automated release of 3 commit(s) since v0.5.0. / 自 v0.5.0 以来的 3 个提交自动发布.
+
+- Isolate PKI dir per port to fix parallel e2e race.
+
+### Fixed 修复
+
+- Isolate PKI dir per port to fix parallel e2e race.
+
+### Internal 内部
+
+- Auto-release daily at Beijing 00:00 when new commits exist.
+- Cap test parallelism for 2-vCPU runners, trim e2e worker threads.
+
 ## [0.5.0] - 2026-08-12
 
 ### Highlights / 亮点
