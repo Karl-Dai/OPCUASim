@@ -84,7 +84,7 @@ fn make_event_filter() -> EventFilter {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn server_events_e2e() {
     let _ = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,opcua=warn"),

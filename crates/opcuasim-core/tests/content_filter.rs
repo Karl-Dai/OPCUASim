@@ -93,7 +93,7 @@ fn lit_ext(v: Variant) -> ExtensionObject {
     ExtensionObject::from_message(LiteralOperand { value: v })
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn content_filter_where_clause_e2e() {
     let _ = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,opcua=warn"),
@@ -232,7 +232,7 @@ async fn content_filter_where_clause_e2e() {
     println!("\n=== content_filter_where_clause_e2e PASSED ===");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn content_filter_cast_operator_returns_error() {
     let _ = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,opcua=warn"),

@@ -49,7 +49,7 @@ where
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn master_full_flow() {
     let _ = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,opcua=warn"),
@@ -394,7 +394,7 @@ async fn master_full_flow() {
 
 const DEADBAND_PORT: u16 = 48411;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn deadband_reduces_samples() {
     let server = Arc::new(OpcUaServer::new());
     let config = ServerConfig {
@@ -531,7 +531,7 @@ async fn deadband_reduces_samples() {
 
 const ECHO_PORT: u16 = 48412;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn method_call_echo() {
     let server = Arc::new(OpcUaServer::new());
     let config = ServerConfig {
@@ -645,7 +645,7 @@ async fn method_call_echo() {
 
 const EVENT_PORT: u16 = 48413;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn event_subscription_via_master() {
     let _ = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,opcua=warn"),

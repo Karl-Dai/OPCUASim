@@ -50,7 +50,7 @@ fn sine_node() -> ServerNode {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reconnect_restores_subscription() {
     let _ = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,opcua=warn"),

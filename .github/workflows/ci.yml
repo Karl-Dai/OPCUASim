@@ -31,5 +31,5 @@ jobs:
       - name: Lint (clippy, deny warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Run tests
-        run: cargo test --workspace
+      - name: Run tests (serialized e2e to fit 2-vCPU runners)
+        run: cargo test --workspace -- --test-threads=2
