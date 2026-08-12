@@ -4,4 +4,4 @@ dist/
 .DS_Store
 *.log
 pki/
-pki-server/
+pki-server*/

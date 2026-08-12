@@ -133,7 +133,7 @@ fn build_server(
         .application_uri(APPLICATION_URI)
         .product_uri("urn:opcuasim")
         .create_sample_keypair(true)
-        .pki_dir("./pki-server")
+        .pki_dir(format!("./pki-server-{}", config.port))
         .host("0.0.0.0")
         .port(config.port)
         .trust_client_certs(true)
