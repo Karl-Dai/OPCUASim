@@ -8,6 +8,7 @@ use crate::runtime::BackendHandle;
 pub struct ServerApp {
     backend: BackendHandle,
     event_rx: UnboundedReceiver<BackendEvent>,
+    updater: opcuaegui_shared::updater::UpdateController,
     model: AppModel,
     last_size: (f32, f32),
 }
@@ -26,9 +27,16 @@ impl ServerApp {
         );
         backend.send(UiCommand::RefreshAddressSpace);
         backend.send(UiCommand::RefreshStatus);
+        let updater = opcuaegui_shared::updater::UpdateController::new(
+            cc.egui_ctx.clone(),
+            crate::APP_ID,
+            "OPCUAServer",
+            env!("CARGO_PKG_VERSION"),
+        );
         Self {
             backend,
             event_rx,
+            updater,
             model: AppModel::default(),
             last_size: (0.0, 0.0),
         }
@@ -112,6 +120,7 @@ impl ServerApp {
 impl eframe::App for ServerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.drain_events();
+        self.updater.poll();
         let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
         if let Some(rect) = ctx.input(|i| i.viewport().inner_rect) {
@@ -152,6 +161,7 @@ impl eframe::App for ServerApp {
         });
 
         self.render_toasts(ui.ctx());
+        self.updater.show(ui.ctx(), true);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

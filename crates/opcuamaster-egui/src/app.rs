@@ -11,6 +11,7 @@ use crate::widgets::connection_dialog;
 pub struct MasterApp {
     backend: BackendHandle,
     event_rx: UnboundedReceiver<BackendEvent>,
+    updater: opcuaegui_shared::updater::UpdateController,
     model: AppModel,
     last_size: (f32, f32),
 }
@@ -29,9 +30,16 @@ impl MasterApp {
         );
         backend.send(UiCommand::ListConnections);
         backend.send(UiCommand::ListGroups);
+        let updater = opcuaegui_shared::updater::UpdateController::new(
+            cc.egui_ctx.clone(),
+            crate::APP_ID,
+            "OPCUAMaster",
+            env!("CARGO_PKG_VERSION"),
+        );
         Self {
             backend,
             event_rx,
+            updater,
             model: AppModel::default(),
             last_size: (0.0, 0.0),
         }
@@ -380,6 +388,7 @@ impl MasterApp {
 impl eframe::App for MasterApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.drain_events();
+        self.updater.poll();
 
         let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
@@ -526,6 +535,7 @@ impl eframe::App for MasterApp {
 
         browse_panel::show(&ctx, &mut self.model, &self.backend);
         self.render_modal(&ctx);
+        self.updater.show(&ctx, self.model.modal.is_none());
         self.render_toasts(&ctx);
     }
 

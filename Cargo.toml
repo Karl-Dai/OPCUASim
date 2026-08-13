@@ -24,3 +24,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 indexmap = { version = "2", features = ["serde"] }
 egui_plot = "0.35"
+ed25519-dalek = "=2.1.1"
+semver = "1"
+self-replace = "1.5"
+sha2 = "0.10"
+ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
