@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-13
+
+### Highlights / 亮点
+
+- Automated release of 1 commit(s) since v0.5.1. / 自 v0.5.1 以来的 1 个提交自动发布.
+
+- Add signed silent background updates.
+
+### Added 新增
+
+- Add signed silent background updates.
+
 ## [0.5.1] - 2026-08-12
 
 ### Highlights / 亮点
