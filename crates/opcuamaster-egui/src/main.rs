@@ -6,6 +6,14 @@ use opcuamaster_egui::{app::MasterApp, APP_ID};
 fn main() -> eframe::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    if let Err(error) = opcuaegui_shared::updater::install_pending_update(
+        APP_ID,
+        "OPCUAMaster",
+        env!("CARGO_PKG_VERSION"),
+    ) {
+        log::warn!("automatic update on launch failed: {error}");
+    }
+
     let (w, h) = settings::load(APP_ID)
         .map(|s| (s.width, s.height))
         .unwrap_or((1280.0, 800.0));

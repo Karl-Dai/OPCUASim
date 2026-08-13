@@ -14,11 +14,15 @@ pub struct WindowSettings {
     pub theme: ThemeMode,
 }
 
-pub fn settings_path(name: &str) -> Option<PathBuf> {
+pub fn data_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     let dir = PathBuf::from(home).join(".opcuasim");
     std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join(format!("{name}-window.json")))
+    Some(dir)
+}
+
+pub fn settings_path(name: &str) -> Option<PathBuf> {
+    Some(data_dir()?.join(format!("{name}-window.json")))
 }
 
 pub fn load(name: &str) -> Option<WindowSettings> {

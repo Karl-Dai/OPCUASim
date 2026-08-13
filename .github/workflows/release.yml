@@ -134,6 +134,49 @@ jobs:
           echo "----- Rendered release body -----"
           cat RELEASE_BODY.md
 
+      - name: Generate signed update manifests
+        shell: bash
+        env:
+          OPCUASIM_UPDATE_SIGNING_KEY: ${{ secrets.OPCUASIM_UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPCUASIM_UPDATE_SIGNING_KEY}" ]; then
+            echo "::error::OPCUASIM_UPDATE_SIGNING_KEY is not configured"
+            exit 1
+          fi
+
+          key_file="$(mktemp)"
+          trap 'rm -f "${key_file}"' EXIT
+          printf '%s' "${OPCUASIM_UPDATE_SIGNING_KEY}" > "${key_file}"
+          chmod 600 "${key_file}"
+          openssl pkey -in "${key_file}" -noout
+
+          version="${GITHUB_REF_NAME#v}"
+          published_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          for binary in dist/OPCUA*; do
+            asset="$(basename "${binary}")"
+            sha256="$(sha256sum "${binary}" | awk '{print $1}')"
+            manifest="${binary}.update.json"
+
+            jq -n \
+              --arg version "${version}" \
+              --rawfile notes section.md \
+              --arg pub_date "${published_at}" \
+              --arg asset "${asset}" \
+              --arg sha256 "${sha256}" \
+              '{version: $version, notes: $notes, pub_date: $pub_date, asset: $asset, sha256: $sha256}' \
+              > "${manifest}"
+
+            openssl pkeyutl -sign -rawin \
+              -inkey "${key_file}" \
+              -in "${manifest}" \
+              -out "${manifest}.sig"
+            test "$(wc -c < "${manifest}.sig")" -eq 64
+          done
+
+          echo "Generated signed manifests:"
+          find dist -maxdepth 1 -name '*.update.json*' -print | sort
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:

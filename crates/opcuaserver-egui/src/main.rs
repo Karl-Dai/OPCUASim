@@ -15,6 +15,14 @@ pub const APP_ID: &str = "opcuaserver";
 fn main() -> eframe::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    if let Err(error) = opcuaegui_shared::updater::install_pending_update(
+        APP_ID,
+        "OPCUAServer",
+        env!("CARGO_PKG_VERSION"),
+    ) {
+        log::warn!("automatic update on launch failed: {error}");
+    }
+
     let (w, h) = settings::load(APP_ID)
         .map(|s| (s.width, s.height))
         .unwrap_or((1200.0, 760.0));
