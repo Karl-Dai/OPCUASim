@@ -1,0 +1,76 @@
+name: Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows 在列:停止/绑定/CSV 等历史回归全部是 Windows 专属,
+        # 仅靠 macOS/Linux 本地测试发现不了。
+        platform: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: Swatinem/rust-cache@v2
+
+      # tauri::generate_context! 编译期要求 frontendDist 目录存在,空目录即可
+      - name: Create empty frontend dist dirs
+        shell: bash
+        run: mkdir -p frontend/dist master-frontend/dist
+
+      - name: Run Rust tests
+        run: cargo test -p opcuasim-core -p opcuaserver-app -p opcuamaster-app
+
+      - name: Validate release metadata
+        run: node scripts/prepare-release.mjs verify-current
+
+  frontend:
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [frontend, master-frontend]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ${{ matrix.app }}
+
+      - name: Unit tests
+        run: npm test
+        working-directory: ${{ matrix.app }}
+
+      - name: Type-check and build
+        run: npm run build
+        working-directory: ${{ matrix.app }}

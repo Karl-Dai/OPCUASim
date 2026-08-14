@@ -1,0 +1,64 @@
+name: download-notify
+
+on:
+  schedule:
+    - cron: '7 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: download-notify
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fetch current installer download counts
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq '.[].assets[] | select(.name | test("\\.(exe|msi|dmg|deb|rpm|AppImage)$")) | {id, name, download_count}' \
+            | jq -sc 'sort_by(.id)' > current.json
+          echo "assets tracked: $(jq length current.json)"
+
+      - name: Load previous snapshot
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/contents/counts.json?ref=download-stats" \
+               -H "Accept: application/vnd.github.raw" > prev.json 2>/dev/null; then
+            echo "HAS_PREV=1" >> "$GITHUB_ENV"
+          else
+            echo "HAS_PREV=0" >> "$GITHUB_ENV"
+            echo '[]' > prev.json
+          fi
+
+      - name: Diff against snapshot
+        run: |
+          jq -n --slurpfile cur current.json --slurpfile prev prev.json '
+            ($prev[0] | map({key: (.id|tostring), value: .download_count}) | from_entries) as $p
+            | [ $cur[0][]
+                | (.download_count - ($p[.id|tostring] // 0)) as $d
+                | select($d > 0)
+                | {name, delta: $d, total: .download_count} ]
+          ' > diff.json
+          jq . diff.json
+
+      - name: Save snapshot
+        run: |
+          if [ "$HAS_PREV" = "0" ]; then
+            master_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/master" --jq .object.sha)
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref=refs/heads/download-stats -f sha="$master_sha" || true
+          elif [ "$(jq 'length' diff.json)" -eq 0 ]; then
+            echo "snapshot unchanged"
+            exit 0
+          fi
+          sha=$(gh api "repos/${GITHUB_REPOSITORY}/contents/counts.json?ref=download-stats" --jq .sha 2>/dev/null || true)
+          base64 -w0 current.json > current.b64
+          jq -n --rawfile content current.b64 --arg sha "$sha" --arg msg "chore: download snapshot $(date -u +%FT%TZ)" \
+            '{branch: "download-stats", message: $msg, content: $content}
+             + (if $sha != "" then {sha: $sha} else {} end)' > body.json
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/contents/counts.json" --input body.json

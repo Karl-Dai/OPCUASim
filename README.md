@@ -1,6 +1,6 @@
 # OPCUASim
 
-Cross-platform OPC UA simulation suite — pure Rust desktop apps built with [egui](https://www.egui.rs/) and the [`async-opcua`](https://crates.io/crates/async-opcua) stack.
+Cross-platform OPC UA simulation suite — desktop apps built with **Rust** · **Tauri 2** · **Vue 3 + TypeScript + Vite** and the [`async-opcua`](https://crates.io/crates/async-opcua) stack.
 
 | Binary | Role |
 |--------|------|
@@ -40,17 +40,22 @@ Cross-platform OPC UA simulation suite — pure Rust desktop apps built with [eg
 
 ### Prerequisites
 
-- Rust 1.77+
-- A CJK font on your system (PingFang on macOS, Microsoft YaHei on Windows, Noto Sans CJK on Linux) for Chinese labels — auto-detected at startup
+- [Rust](https://rustup.rs/) 1.77+
+- [Node.js](https://nodejs.org/) 18+
+- [Tauri CLI](https://tauri.app/) — `cargo install tauri-cli`
 
 ### Build & Run
 
 ```bash
-# Master station
-cargo run -p opcuamaster-egui --release
+# install frontend dependencies (run from the repository root)
+cd frontend && npm install
+cd master-frontend && npm install
 
-# Server simulator
-cargo run -p opcuaserver-egui --release
+# run the Server simulator
+cd crates/opcuaserver-app && cargo tauri dev
+
+# run the Master station
+cd crates/opcuamaster-app && cargo tauri dev
 ```
 
 ### Project Structure
@@ -59,11 +64,11 @@ cargo run -p opcuaserver-egui --release
 OPCUASim/
 ├── crates/
 │   ├── opcuasim-core/          # Core library: client, server, browse, subscription, polling, history, methods
-│   ├── opcuaegui-shared/       # Shared egui pieces: theme, widgets, fonts, tokio runtime handle, settings
-│   ├── opcuamaster-egui/       # OPCUAMaster desktop app
-│   └── opcuaserver-egui/       # OPCUAServer desktop app
-├── pki/                        # Local PKI (trusted/rejected/own)
-└── docs/                       # Design notes & implementation plans
+│   ├── opcuaserver-app/        # OPCUAServer Tauri application
+│   └── opcuamaster-app/        # OPCUAMaster Tauri application
+├── frontend/                   # Server Vue 3 frontend
+├── master-frontend/            # Master Vue 3 frontend
+└── shared-frontend/            # Shared Vue components, i18n, styles
 ```
 
 ## Contributing
@@ -76,6 +81,31 @@ OPCUASim/
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) and the [Releases](https://github.com/kelsoprotein-lab/OPCUASim/releases) page.
+
+## macOS First Launch
+
+The bundles are **not Apple-notarized** (no paid Developer Program). On first launch macOS shows *"OPCUAServer / OPCUAMaster cannot be opened — Apple could not verify…"* with only *Done* and *Move to Trash* buttons. This is the standard macOS 15 (Sequoia) block for ad-hoc-signed apps — the app is **not damaged**.
+
+<details>
+<summary><b>How to allow it (pick one)</b></summary>
+
+**1. GUI path**
+
+- Double-click the `.app`, see the block dialog, click *Done*.
+- Open *System Settings → Privacy & Security*, scroll to the bottom.
+- You'll see *"OPCUAServer was blocked…"* — click *Open Anyway* and enter your password.
+- The next dialog has an *Open* button; click it. Subsequent launches go straight through.
+
+**2. One-line Terminal**
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/OPCUAServer.app"
+xattr -dr com.apple.quarantine "/Applications/OPCUAMaster.app"
+```
+
+Strips the quarantine flag so macOS stops blocking.
+
+</details>
 
 ## License
 
