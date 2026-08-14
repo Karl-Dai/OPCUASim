@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use log::info;
+use log::{info, warn};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
@@ -15,8 +15,8 @@ use opcua_server::node_manager::memory::{
 };
 use opcua_server::node_manager::{DynNodeManager, NodeManagerBuilder, ServerContext};
 use opcua_server::{
-    Server, ServerBuilder, ServerHandle, ServerUserToken, SubscriptionCache,
-    ANONYMOUS_USER_TOKEN_ID,
+    Limits, Server, ServerBuilder, ServerHandle, ServerUserToken, SubscriptionCache,
+    SubscriptionLimits, ANONYMOUS_USER_TOKEN_ID,
 };
 use opcua_types::{MessageSecurityMode, NodeId};
 
@@ -30,7 +30,6 @@ use super::models::{ServerConfig, ServerFolder, ServerNode, ServerState};
 use super::simulation::{EventNotifier, SimulationEngine};
 use crate::error::OpcUaSimError;
 
-const APPLICATION_URI: &str = "urn:opcuasim:server";
 const NAMESPACE_URI: &str = "urn:opcuasim:server:nodes";
 
 /// The OPC UA simulation server.
@@ -130,14 +129,41 @@ fn build_server(
 
     let mut builder = ServerBuilder::new()
         .application_name(&config.name)
-        .application_uri(APPLICATION_URI)
+        .application_uri(&config.application_uri)
         .product_uri("urn:opcuasim")
         .create_sample_keypair(true)
-        .pki_dir(format!("./pki-server-{}", config.port))
-        .host("0.0.0.0")
+        .pki_dir(
+            dirs::config_dir()
+                .map(|d| {
+                    d.join("OPCUASim")
+                        .join(format!("pki-server-{}", config.port))
+                })
+                .unwrap_or_else(|| {
+                    std::path::PathBuf::from(format!("./pki-server-{}", config.port))
+                }),
+        )
+        .host(&config.host)
         .port(config.port)
-        .trust_client_certs(true)
+        .trust_client_certs(config.trust_client_certs)
+        .limits(Limits {
+            max_sessions: config.max_sessions as usize,
+            subscriptions: SubscriptionLimits {
+                max_subscriptions_per_session: config.max_subscriptions_per_session as usize,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
         .with_node_manager(event_nm_builder);
+
+    // Certificate: load a user-provided certificate if configured, otherwise
+    // auto-generate a self-signed one (only suitable for local testing).
+    builder = match (&config.certificate_path, &config.private_key_path) {
+        (Some(cert), Some(key)) => builder
+            .create_sample_keypair(false)
+            .certificate_path(cert)
+            .private_key_path(key),
+        _ => builder.create_sample_keypair(true),
+    };
 
     if config.anonymous_enabled {
         user_token_ids.push(ANONYMOUS_USER_TOKEN_ID.to_string());
@@ -180,12 +206,18 @@ fn build_server(
                 "Basic256Sha256" => SecurityPolicy::Basic256Sha256,
                 "Aes128Sha256RsaOaep" => SecurityPolicy::Aes128Sha256RsaOaep,
                 "Aes256Sha256RsaPss" => SecurityPolicy::Aes256Sha256RsaPss,
-                _ => continue,
+                other => {
+                    warn!("Unknown security policy '{}', skipping", other);
+                    continue;
+                }
             };
             let sec_mode = match mode.as_str() {
                 "Sign" => MessageSecurityMode::Sign,
                 "SignAndEncrypt" => MessageSecurityMode::SignAndEncrypt,
-                _ => continue,
+                other => {
+                    warn!("Unknown security mode '{}', skipping", other);
+                    continue;
+                }
             };
             let id = format!("{}_{}", policy.to_lowercase(), mode.to_lowercase());
             builder = builder.add_endpoint(
@@ -200,7 +232,9 @@ fn build_server(
         }
     }
 
-    builder = builder.discovery_urls(vec![endpoint_path.to_string()]);
+    let discovery_url = format!("opc.tcp://{}:{}{}", config.host, config.port, endpoint_path);
+    builder = builder.discovery_urls(vec![discovery_url]);
+    builder = builder.default_endpoint("none");
 
     let (server, handle) = builder
         .build()

@@ -8,9 +8,10 @@ use opcua_nodes::{
 use opcua_server::address_space::AddressSpace;
 use opcua_types::{
     custom::{DataTypeTree, DynamicStructure, EncodingIds, ParentIds, TypeInfo},
-    Array, DataTypeDefinition, DataTypeId, EnumDefinition, EnumField, ExtensionObject, Identifier,
-    LocalizedText, NodeClass, NodeId, ObjectTypeId, QualifiedName, ReferenceTypeId,
-    StructureDefinition, StructureField, StructureType, UAString, Variant, VariantScalarTypeId,
+    Array, ByteString, DataTypeDefinition, DataTypeId, DateTime, EnumDefinition, EnumField,
+    ExtensionObject, Identifier, LocalizedText, NodeClass, NodeId, ObjectTypeId, QualifiedName,
+    ReferenceTypeId, StructureDefinition, StructureField, StructureType, UAString, Variant,
+    VariantScalarTypeId,
 };
 
 use super::models::{DataType, ServerFolder, ServerNode, SimulationMode, StructField};
@@ -135,8 +136,10 @@ pub fn string_to_variant(
             .map(Variant::Double)
             .unwrap_or(Variant::Double(0.0)),
         DataType::String => Variant::String(UAString::from(value)),
-        DataType::DateTime => Variant::String(UAString::from(value)),
-        DataType::ByteString => Variant::String(UAString::from(value)),
+        DataType::DateTime => Variant::DateTime(Box::new(DateTime::now())),
+        DataType::ByteString => Variant::ByteString(ByteString {
+            value: Some(value.as_bytes().to_vec()),
+        }),
         DataType::Enum { fields, .. } => {
             let lower = value.trim().to_ascii_lowercase();
             if let Some((v, _)) = fields
@@ -373,8 +376,10 @@ pub fn f64_to_variant(
         DataType::Float => Variant::Float(value as f32),
         DataType::Double => Variant::Double(value),
         DataType::String => Variant::String(UAString::from(format!("{:.2}", value))),
-        DataType::DateTime => Variant::Double(value),
-        DataType::ByteString => Variant::Double(value),
+        DataType::DateTime => Variant::DateTime(Box::new(DateTime::now())),
+        DataType::ByteString => Variant::ByteString(ByteString {
+            value: Some(value.to_le_bytes().to_vec()),
+        }),
         DataType::Enum { fields, .. } => {
             if fields.is_empty() {
                 return Variant::Int32(0);
@@ -479,9 +484,13 @@ pub fn populate_address_space(
     for folder in folders {
         let node_id = make_node_id(namespace_index, &folder.node_id);
         let parent_id = make_parent_id(namespace_index, &folder.parent_id);
+        let browse_name = folder
+            .browse_name
+            .clone()
+            .unwrap_or_else(|| folder.display_name.replace(' ', ""));
         address_space.add_folder(
             &node_id,
-            QualifiedName::new(namespace_index, &folder.display_name),
+            QualifiedName::new(namespace_index, &browse_name),
             LocalizedText::new("", &folder.display_name),
             &parent_id,
         );
@@ -528,9 +537,16 @@ pub fn add_variable_node(
         _ => string_to_variant("0", &node.data_type, custom),
     };
 
-    let mut builder = VariableBuilder::new(&node_id, &node.display_name, &node.display_name)
+    let browse_name = node
+        .browse_name
+        .clone()
+        .unwrap_or_else(|| node.display_name.replace(' ', ""));
+    let mut builder = VariableBuilder::new(&node_id, &browse_name, &node.display_name)
         .data_type(dt_node_id)
         .value(initial_value)
+        .value_rank(-1) // scalar (Part 3 §5.5.2)
+        .minimum_sampling_interval(0.0) // 0 = server monitors continuously
+        .has_type_definition(NodeId::new(0, 63u32)) // BaseDataVariableType (i=63)
         .organized_by(parent_id)
         .history_readable();
 

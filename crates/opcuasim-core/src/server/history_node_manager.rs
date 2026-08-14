@@ -16,9 +16,10 @@ use opcua_server::node_manager::{
 };
 use opcua_server::{ContinuationPoint, CreateMonitoredItem};
 use opcua_types::{
-    DataValue, DateTime, HistoryData, HistoryEvent, HistoryEventFieldList, MonitoringMode, NodeId,
-    NumericRange, ReadAnnotationDataDetails, ReadAtTimeDetails, ReadEventDetails,
-    ReadProcessedDetails, ReadRawModifiedDetails, StatusCode, TimestampsToReturn, Variant,
+    AttributeId, DataValue, DateTime, HistoryData, HistoryEvent, HistoryEventFieldList,
+    MonitoringMode, NodeId, NumericRange, ReadAnnotationDataDetails, ReadAtTimeDetails,
+    ReadEventDetails, ReadProcessedDetails, ReadRawModifiedDetails, StatusCode, TimestampsToReturn,
+    Variant,
 };
 
 use super::aggregate;
@@ -210,7 +211,10 @@ impl InMemoryNodeManagerImpl for HistoryNodeManagerImpl {
             .await;
         if result.is_ok() {
             for node in nodes_to_write.iter() {
-                if node.status().is_good() {
+                // Only external writes to the Value attribute enter history;
+                // metadata writes (DisplayName, EU Range, …) must not pollute
+                // the value history.
+                if node.status().is_good() && node.value().attribute_id == AttributeId::Value {
                     let pv = node.value();
                     let mut dv = pv.value.clone();
                     let now = DateTime::now();

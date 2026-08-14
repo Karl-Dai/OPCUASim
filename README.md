@@ -29,7 +29,8 @@ Cross-platform OPC UA simulation suite — desktop apps built with **Rust** · *
 
 ### OPCUAServer — Address-Space Simulator
 
-- **Embedded OPC UA server** — defaults to `opc.tcp://0.0.0.0:4840`
+- **Embedded OPC UA server** — defaults to `opc.tcp://127.0.0.1:4840` (bind host configurable; use `0.0.0.0` for LAN access)
+- **Secure by default** — default security policy `Basic256Sha256` / `SignAndEncrypt`; certificate & private key paths configurable
 - **Folder + Variable tree** — add folders and variables under `Objects`
 - **Simulation modes** — `Static`, `Random`, `Sine`, `Linear` (Repeat/Bounce), `Script` (`evalexpr`)
 - **Live values** — variable values update at their per-node interval and stream to the UI

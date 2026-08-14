@@ -1,4 +1,7 @@
 import type { DataType, SimulationMode } from './types'
+import { dataTypeLabel, simulationLabel } from '@shared/types'
+
+export { dataTypeLabel, simulationLabel }
 
 // Scalar types offered by the legacy "add node" form. Complex types (Array /
 // Enum / Structure) can still arrive in the model via a loaded project.
@@ -16,33 +19,6 @@ export const SCALAR_DATA_TYPES: DataType[] = [
   'DateTime',
   'ByteString',
 ]
-
-export function dataTypeLabel(dt: DataType): string {
-  if (typeof dt === 'string') return dt
-  if ('Array' in dt) return `Array(${dataTypeLabel(dt.Array.elementType)})`
-  if ('Array2D' in dt) {
-    const { elementType, dims } = dt.Array2D
-    return `Array2D(${dataTypeLabel(elementType)}${dims[0]}x${dims[1]})`
-  }
-  if ('Enum' in dt) return `Enum(${dt.Enum.name})`
-  if ('Structure' in dt) return `Structure(${dt.Structure.name})`
-  return String(dt)
-}
-
-export function simulationLabel(mode: SimulationMode): string {
-  switch (mode.type) {
-    case 'Static':
-      return 'Static'
-    case 'Random':
-      return 'Random'
-    case 'Sine':
-      return 'Sine'
-    case 'Linear':
-      return 'Linear'
-    case 'Script':
-      return 'Script'
-  }
-}
 
 export type SimKind = 'Static' | 'Random' | 'Sine' | 'Linear' | 'Script'
 

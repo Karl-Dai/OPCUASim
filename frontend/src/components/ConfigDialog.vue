@@ -26,14 +26,19 @@ const SECURITY_MODES = ['None', 'Sign', 'SignAndEncrypt']
 function defaultDraft(): ServerConfig {
   return {
     name: 'OPCUAServer Simulator',
-    endpoint_url: 'opc.tcp://0.0.0.0:4840',
+    application_uri: 'urn:opcuasim:server',
+    host: '127.0.0.1',
+    endpoint_url: 'opc.tcp://127.0.0.1:4840',
     port: 4840,
-    security_policies: ['None'],
-    security_modes: ['None'],
+    security_policies: ['Basic256Sha256'],
+    security_modes: ['SignAndEncrypt'],
     users: [],
     anonymous_enabled: true,
     max_sessions: 100,
     max_subscriptions_per_session: 50,
+    certificate_path: null,
+    private_key_path: null,
+    trust_client_certs: true,
     history_buffer_size: 10000,
     event_history_size: 1000,
   }
@@ -66,6 +71,10 @@ function onModeChange(mode: string, e: Event) {
   toggleList(draft.value.security_modes, mode, (e.target as HTMLInputElement).checked)
 }
 
+function syncEndpointUrl() {
+  draft.value.endpoint_url = `opc.tcp://${draft.value.host}:${draft.value.port}`
+}
+
 async function saveConfig() {
   try {
     await invoke('update_config', { config: draft.value })
@@ -93,12 +102,35 @@ async function saveConfig() {
                 <input v-model="draft.name" class="input" type="text" />
               </label>
               <label class="field">
+                <span>{{ t('config.applicationUri') }}</span>
+                <input v-model="draft.application_uri" class="input" type="text" />
+              </label>
+              <label class="field">
+                <span>{{ t('config.host') }}</span>
+                <input v-model="draft.host" class="input" type="text" @change="syncEndpointUrl" />
+              </label>
+              <label class="field">
                 <span>{{ t('config.port') }}</span>
-                <input v-model.number="draft.port" class="input" type="number" min="1" max="65535" />
+                <input
+                  v-model.number="draft.port"
+                  class="input"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  @change="syncEndpointUrl"
+                />
               </label>
               <label class="field field-wide">
                 <span>{{ t('config.endpointUrl') }}</span>
                 <input v-model="draft.endpoint_url" class="input" type="text" />
+              </label>
+              <label class="field">
+                <span>{{ t('config.certificatePath') }}</span>
+                <input v-model="draft.certificate_path" class="input" type="text" placeholder="" />
+              </label>
+              <label class="field">
+                <span>{{ t('config.privateKeyPath') }}</span>
+                <input v-model="draft.private_key_path" class="input" type="text" placeholder="" />
               </label>
               <label class="field">
                 <span>{{ t('config.maxSessions') }}</span>
@@ -134,6 +166,10 @@ async function saveConfig() {
               <label class="check">
                 <input v-model="draft.anonymous_enabled" type="checkbox" />
                 <span>{{ t('config.anonymousEnabled') }}</span>
+              </label>
+              <label class="check">
+                <input v-model="draft.trust_client_certs" type="checkbox" />
+                <span>{{ t('config.trustClientCerts') }}</span>
               </label>
             </div>
 

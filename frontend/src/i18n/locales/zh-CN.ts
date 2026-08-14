@@ -115,11 +115,16 @@ export type DictShape = {
   config: {
     title: string
     name: string
+    applicationUri: string
+    host: string
     port: string
     endpointUrl: string
     anonymousEnabled: string
     maxSessions: string
     maxSubscriptions: string
+    certificatePath: string
+    privateKeyPath: string
+    trustClientCerts: string
     historyBuffer: string
     historyDisabled: string
     eventHistory: string
@@ -252,11 +257,16 @@ const dict: DictShape = {
   config: {
     title: '服务器配置',
     name: '名称',
+    applicationUri: '应用 URI',
+    host: '监听地址',
     port: '端口',
     endpointUrl: 'Endpoint URL',
     anonymousEnabled: '允许匿名访问',
     maxSessions: '最大会话数',
     maxSubscriptions: '每会话最大订阅数',
+    certificatePath: '证书路径(可选)',
+    privateKeyPath: '私钥路径(可选)',
+    trustClientCerts: '自动信任未知客户端证书',
     historyBuffer: '历史缓冲容量(条/节点)',
     historyDisabled: '(已禁用)',
     eventHistory: '事件历史容量(条/源)',

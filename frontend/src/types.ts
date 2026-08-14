@@ -1,6 +1,25 @@
 // Command/response DTOs matching the Rust `opcuaserver-app` DTOs exactly.
-// The OPC UA domain types below mirror the serde representation of
-// `opcuasim-core`'s `DataType` / `SimulationMode` enums.
+// The OPC UA domain types (DataType / SimulationMode / UserRole) are shared
+// with the other frontends via `@shared/types` and mirror the serde
+// representation of `opcuasim-core`.
+
+import type {
+  ScalarDataType,
+  StructFieldDto,
+  DataType,
+  LinearMode,
+  SimulationMode,
+  UserRole,
+} from '@shared/types'
+
+export type {
+  ScalarDataType,
+  StructFieldDto,
+  DataType,
+  LinearMode,
+  SimulationMode,
+  UserRole,
+}
 
 export interface ServerStatus {
   state: string
@@ -15,52 +34,6 @@ export interface FolderRow {
   parent_id: string
 }
 
-// `DataType` serializes as an externally-tagged enum: unit variants are plain
-// strings, struct variants are `{ Variant: { ... } }` objects.
-export type ScalarDataType =
-  | 'Boolean'
-  | 'Int16'
-  | 'Int32'
-  | 'Int64'
-  | 'UInt16'
-  | 'UInt32'
-  | 'UInt64'
-  | 'Float'
-  | 'Double'
-  | 'String'
-  | 'DateTime'
-  | 'ByteString'
-
-export interface StructFieldDto {
-  name: string
-  type: DataType
-}
-
-export type DataType =
-  | ScalarDataType
-  | { Array: { elementType: DataType } }
-  | { Array2D: { elementType: DataType; dims: [number, number] } }
-  | { Enum: { name: string; fields: Array<[number, string]> } }
-  | { Structure: { name: string; fields: StructFieldDto[] } }
-
-export type LinearMode = 'Repeat' | 'Bounce'
-
-// `SimulationMode` is internally tagged with `type`.
-export type SimulationMode =
-  | { type: 'Static'; value: string }
-  | { type: 'Random'; min: number; max: number; interval_ms: number }
-  | { type: 'Sine'; amplitude: number; offset: number; period_ms: number; interval_ms: number }
-  | {
-      type: 'Linear'
-      start: number
-      step: number
-      min: number
-      max: number
-      mode: LinearMode
-      interval_ms: number
-    }
-  | { type: 'Script'; expression: string; interval_ms: number }
-
 export interface NodeRow {
   node_id: string
   display_name: string
@@ -68,7 +41,6 @@ export interface NodeRow {
   data_type: DataType
   writable: boolean
   simulation: SimulationMode
-  current_value: string | null
   eu_range_low: number
   eu_range_high: number
 }
@@ -88,8 +60,6 @@ export interface SimValuesResponse {
   values: SimValue[]
 }
 
-export type UserRole = 'ReadOnly' | 'ReadWrite' | 'Admin'
-
 export interface UserAccount {
   username: string
   password: string
@@ -98,6 +68,8 @@ export interface UserAccount {
 
 export interface ServerConfig {
   name: string
+  application_uri: string
+  host: string
   endpoint_url: string
   port: number
   security_policies: string[]
@@ -106,6 +78,9 @@ export interface ServerConfig {
   anonymous_enabled: boolean
   max_sessions: number
   max_subscriptions_per_session: number
+  certificate_path: string | null
+  private_key_path: string | null
+  trust_client_certs: boolean
   history_buffer_size: number
   event_history_size: number
 }

@@ -20,6 +20,8 @@ thiserror = "2.0"
 uuid = { version = "1", features = ["v4", "serde"] }
 log = "0.4"
 rand = "0.8"
+evalexpr = "7"
+dirs = "5"
 sha1_smol = "1"
 x509-parser = "0.16"
 pem = "3"
