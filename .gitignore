@@ -5,3 +5,8 @@ dist/
 *.log
 pki/
 pki-server*/
+.codegraph/
+.codex/
+.omo/
+.opencode/
+openspec/
