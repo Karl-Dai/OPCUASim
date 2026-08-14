@@ -4,6 +4,50 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-14
+
+### Highlights / 亮点
+
+- 🖥️ **全新 Tauri 2 + Vue 3 架构** / Both apps rebuilt on Tauri 2 + Vue 3 + TypeScript + Vite, replacing the egui frontends with a shared bilingual UI foundation.
+- 🔐 **默认安全加固** / Secure by default: `Basic256Sha256` / `SignAndEncrypt` and bind host `127.0.0.1`; certificate/private-key paths and client-cert trust are configurable.
+- ✍️ **Static 节点写入回显** / Client writes to Static nodes now surface in the server UI within ~500 ms via a dedicated address-space polling task.
+- 🧮 **Script 仿真模式真实求值** / Script mode now evaluates real `evalexpr` expressions (`t` / `iteration` variables) instead of returning a constant.
+- 🧩 **共享前端类型面** / OPC UA domain types (DataType / SimulationMode) consolidated into `shared-frontend`, placeholder removed.
+- 🧪 **132 测试全绿** / 132 tests pass on CI (Linux + Windows), clippy clean, both frontends build.
+
+### Added 新增
+
+- Tauri 2 desktop apps `opcuaserver-app` / `opcuamaster-app` with Vue 3 + Vite frontends (`frontend/`, `master-frontend/`, `shared-frontend/`) / 全新的 Tauri 2 桌面应用与 Vue 3 + Vite 前端.
+- `ServerConfig` gains `application_uri`, `host`, `certificate_path`, `private_key_path`, `trust_client_certs` / 服务端配置新增应用 URI、监听地址、证书与私钥路径、客户端证书信任开关.
+- `ServerNode` / `ServerFolder` gain optional `browse_name` (defaults to display name without spaces) / 节点与文件夹支持可选 browse_name.
+- Structured `DetailEvent` logging in the core, rendering richer master log entries / 核心新增结构化 DetailEvent 日志,主站日志可读性提升.
+
+### Changed 改进
+
+- Default security policy/mode changed from `None` to `Basic256Sha256` + `SignAndEncrypt`; default bind host from `0.0.0.0` to `127.0.0.1` / 默认安全模式由 None 改为 Basic256Sha256/SignAndEncrypt,默认监听改为 127.0.0.1.
+- Server PKI now lives under the platform config dir (`pki-server-<port>`), keeping per-port isolation / 服务端 PKI 迁移至平台配置目录并保持按端口隔离.
+- Value tracking is engine-side only: `update_seq` / `current_value` removed from `ServerNode` / 数值跟踪收敛到仿真引擎,ServerNode 移除冗余字段.
+- History write hook records only `Value`-attribute writes; metadata writes no longer pollute value history / 历史记录钩子只记录 Value 属性写入,元数据写入不再污染值历史.
+- `DateTime` / `ByteString` variants now carry real typed values; new variables get `value_rank`, `minimum_sampling_interval` and `BaseDataVariableType` / DateTime/ByteString 变体改为真实类型值,新变量补齐规范属性.
+- CI reworked into test / nightly release-prep / release-on-merge / download-notify workflows with a Node release chain / CI 重构为测试、夜间发版准备、合入即发、下载通知四套工作流.
+
+### Fixed 修复
+
+- Script simulation mode no longer returns the constant `0.0` — real `evalexpr` evaluation with error logging / Script 仿真不再恒返回 0,改为真实表达式求值并记录错误.
+- Linear `Bounce` mode uses f64 modulo, avoiding i64 overflow at extreme iteration counts / Bounce 模式改用 f64 取模,消除大迭代次数下的 i64 溢出.
+- Vite native config-loader warnings fixed (`.ts` import extension + shared-frontend package type) / 修复 Vite 原生配置加载警告.
+- Server builder now applies configured `Limits`, advertises discovery URL from the bind host, and warns on unknown policy/mode instead of silently skipping / 服务端构建应用配置的限制参数、按绑定地址发布发现 URL,并对未知策略/模式给出告警.
+
+### Removed 移除
+
+- egui crates (`opcuaegui-shared`, `opcuamaster-egui`, `opcuaserver-egui`) replaced by the Tauri 2 + Vue 3 stack / 移除 egui 三件套,由 Tauri 2 + Vue 3 取代.
+
+### Tests 测试
+
+- New `static_write_poll` e2e: client writes to a writable Static node surface in engine `current_values` / 新增 Static 写轮询 e2e 测试.
+- New generator unit tests: script evaluation, invalid expression fallback, Bounce overflow / 新增 Script 求值与 Bounce 溢出单测.
+- Full suite: 132 tests / 0 failures (CI on Linux + Windows); 24 release-script vitest cases / 全量 132 测试零失败(CI Linux + Windows),发布脚本 24 条 vitest 用例.
+
 ## [0.6.0] - 2026-08-13
 
 ### Highlights / 亮点
