@@ -1,6 +1,6 @@
 # OPCUASim
 
-跨平台 OPC UA 仿真套件 — 基于 [egui](https://www.egui.rs/) 与 [`async-opcua`](https://crates.io/crates/async-opcua) 的纯 Rust 桌面应用。
+跨平台 OPC UA 仿真套件 —— 基于 **Rust** · **Tauri 2** · **Vue 3 + TypeScript + Vite** 与 [`async-opcua`](https://crates.io/crates/async-opcua) 的桌面应用。
 
 | 可执行文件 | 角色 |
 |-----------|------|
@@ -40,17 +40,22 @@
 
 ### 环境要求
 
-- Rust 1.77+
-- 系统需有 CJK 字体（macOS 的 PingFang、Windows 的微软雅黑、Linux 的 Noto Sans CJK），启动时自动检测
+- [Rust](https://rustup.rs/) 1.77+
+- [Node.js](https://nodejs.org/) 18+
+- [Tauri CLI](https://tauri.app/) —— `cargo install tauri-cli`
 
 ### 构建与运行
 
 ```bash
-# 主站
-cargo run -p opcuamaster-egui --release
+# 安装前端依赖（在仓库根目录执行）
+cd frontend && npm install
+cd master-frontend && npm install
 
-# 服务端仿真器
-cargo run -p opcuaserver-egui --release
+# 启动服务端仿真器
+cd crates/opcuaserver-app && cargo tauri dev
+
+# 启动主站
+cd crates/opcuamaster-app && cargo tauri dev
 ```
 
 ### 项目结构
@@ -59,11 +64,11 @@ cargo run -p opcuaserver-egui --release
 OPCUASim/
 ├── crates/
 │   ├── opcuasim-core/          # 核心库：client、server、browse、subscription、polling、history、methods
-│   ├── opcuaegui-shared/       # 共享 egui 组件：theme、widgets、fonts、tokio runtime handle、settings
-│   ├── opcuamaster-egui/       # OPCUAMaster 桌面应用
-│   └── opcuaserver-egui/       # OPCUAServer 桌面应用
-├── pki/                        # 本地 PKI（trusted / rejected / own）
-└── docs/                       # 设计文档与实施计划
+│   ├── opcuaserver-app/        # OPCUAServer Tauri 应用
+│   └── opcuamaster-app/        # OPCUAMaster Tauri 应用
+├── frontend/                   # 服务端 Vue 3 前端
+├── master-frontend/            # 主站 Vue 3 前端
+└── shared-frontend/            # 共享 Vue 组件、i18n、样式
 ```
 
 ## 参与贡献
@@ -76,6 +81,31 @@ OPCUASim/
 ## 更新日志
 
 详见 [CHANGELOG.md](CHANGELOG.md) 与 [Releases](https://github.com/kelsoprotein-lab/OPCUASim/releases) 页面。
+
+## macOS 首次启动
+
+应用未做 Apple 公证（Notarization）。首次双击 `.app` 时，macOS 会弹窗 *"未打开 OPCUAServer / OPCUAMaster —— Apple 无法验证…"*，只提供 *完成* 与 *移到废纸篓* 两个按钮。这是 macOS 15 (Sequoia) 起对 ad-hoc 签名应用的标准拦截，**不是软件损坏**。
+
+<details>
+<summary><b>放行步骤（任选其一）</b></summary>
+
+**1. 图形界面**
+
+- 双击 `.app`，出现拦截弹窗，点 *完成*。
+- 打开 *系统设置 → 隐私与安全性*，滚到底部。
+- 看到 *"已阻止 OPCUAServer 的使用…"*，点 *仍要打开* 并输入密码。
+- 弹窗变为 *打开*，点击即可，以后双击直接启动。
+
+**2. 终端一行命令**
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/OPCUAServer.app"
+xattr -dr com.apple.quarantine "/Applications/OPCUAMaster.app"
+```
+
+清掉隔离标记，macOS 不再拦截。
+
+</details>
 
 ## 许可证
 

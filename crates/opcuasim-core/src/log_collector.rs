@@ -127,4 +127,30 @@ mod tests {
         assert!(csv.starts_with("Timestamp,"));
         assert!(csv.contains("Browse"));
     }
+
+    #[test]
+    fn test_add_and_get_event_entry_round_trip() {
+        use serde_json::json;
+
+        let collector = LogCollector::new();
+        let entry = LogEntry::new(
+            collector.next_seq(),
+            "test-conn".to_string(),
+            Direction::Request,
+            "Browse".to_string(),
+            "Browse node ns=2;i=42".to_string(),
+            None,
+        )
+        .with_detail_event("browse", json!({ "node_id": "ns=2;i=42" }));
+
+        collector.add(entry);
+        let all = collector.get_all();
+
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].service, "Browse");
+
+        let event = all[0].detail_event.as_ref().expect("detail_event present");
+        assert_eq!(event.kind, "browse");
+        assert_eq!(event.payload["node_id"], "ns=2;i=42");
+    }
 }

@@ -4,187 +4,421 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
-  build:
-    permissions:
-      contents: read
+  validate-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Validate tag and release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid stable release tag: $RELEASE_TAG"
+            exit 1
+          fi
+          if [ "$GITHUB_SHA" != "$(git rev-list -n 1 "$RELEASE_TAG")" ]; then
+            echo "::error::Workflow ref $GITHUB_SHA does not match $RELEASE_TAG"
+            exit 1
+          fi
+          node scripts/prepare-release.mjs verify "$RELEASE_TAG"
+
+  build-server:
+    needs: validate-release
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest
-            target: aarch64-apple-darwin
-            suffix: macos-aarch64
+            args: '--target aarch64-apple-darwin'
+            rust_target: aarch64-apple-darwin
           - platform: macos-latest
-            target: x86_64-apple-darwin
-            suffix: macos-x86_64
+            args: '--target x86_64-apple-darwin'
+            rust_target: x86_64-apple-darwin
           - platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            suffix: linux-x86_64
+            args: ''
+            rust_target: ''
           - platform: windows-latest
-            target: x86_64-pc-windows-msvc
-            suffix: windows-x86_64
-    runs-on: ${{ matrix.platform }}
+            args: ''
+            rust_target: ''
+            win_arch: x64
+          - platform: windows-latest
+            args: '--target aarch64-pc-windows-msvc'
+            rust_target: aarch64-pc-windows-msvc
+            win_arch: arm64
 
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust_target }}
 
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libxkbcommon-dev libwayland-dev libxcb1-dev libxcb-render0-dev \
-            libxcb-shape0-dev libxcb-xfixes0-dev libgl1-mesa-dev libfontconfig1-dev
-
-      - name: Build OPCUAMaster
-        run: cargo build --release --target ${{ matrix.target }} -p opcuamaster-egui
-
-      - name: Build OPCUAServer
-        run: cargo build --release --target ${{ matrix.target }} -p opcuaserver-egui
-
-      - name: Stage artifacts (Unix)
-        if: matrix.platform != 'windows-latest'
-        shell: bash
-        run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/OPCUAMaster dist/OPCUAMaster-${{ matrix.suffix }}
-          cp target/${{ matrix.target }}/release/OPCUAServer dist/OPCUAServer-${{ matrix.suffix }}
-
-      - name: Stage artifacts (Windows)
-        if: matrix.platform == 'windows-latest'
-        shell: bash
-        run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/OPCUAMaster.exe dist/OPCUAMaster-${{ matrix.suffix }}.exe
-          cp target/${{ matrix.target }}/release/OPCUAServer.exe dist/OPCUAServer-${{ matrix.suffix }}.exe
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          name: opcuasim-${{ matrix.suffix }}
-          path: dist/*
-          if-no-files-found: error
+          workspaces: './crates/opcuaserver-app -> ../../target'
 
-  publish:
-    needs: build
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
+      - name: Install frontend dependencies
+        run: npm install
+        working-directory: frontend
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: frontend
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: crates/opcuaserver-app
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: '${{ env.RELEASE_TAG }}'
+          releaseBody: 'See the assets below to download the installers for your platform.'
+          # Keep the release a draft during the build: GitHub's
+          # `releases/latest` skips drafts, so existing users' update checks
+          # keep hitting the previous *complete* release. publish-manifest
+          # clears the draft flag once installers + manifest + body are all in.
+          releaseDraft: true
+          prerelease: false
+          # The project ships its own latest-server/master.json via
+          # gen-update-manifest; tauri-action's latest.json is unused. Being a
+          # single shared filename, every parallel matrix job clobbers it —
+          # the source of the flaky "delete-a-release-asset" 404 race. Skip it.
+          includeUpdaterJson: false
+          args: ${{ matrix.args }}
+
+      # tauri-action 自身上传 bundle 无重试: 10 个 matrix job 并发上传到同一
+      # (draft) release 时,部分 PUT 输给 GitHub API race (delete-a-release-asset
+      # 404) 而静默丢失。这里兜底重传本 job 产出的全部 bundle: gh release
+      # upload --clobber + 5 次重试,幂等补齐 tauri-action 漏掉的。各 job 的
+      # bundle 文件名互不相同,不会互相 clobber。bash 3.2 兼容 (macOS runner),
+      # 故用 while-read 而非 mapfile。
+      - name: Re-upload bundles with retry (Server)
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            BUNDLE_DIR="target/${{ matrix.rust_target }}/release/bundle"
+          else
+            BUNDLE_DIR="target/release/bundle"
+          fi
+          if [ ! -d "$BUNDLE_DIR" ]; then
+            echo "::warning::bundle dir $BUNDLE_DIR not found — skipping bundle re-upload"
+            exit 0
+          fi
+          upload_one() {
+            for attempt in 1 2 3 4 5; do
+              if gh release upload "$RELEASE_TAG" "$1" --clobber; then return 0; fi
+              echo "::warning::upload $(basename "$1") attempt $attempt failed, retrying in 15s"
+              sleep 15
+            done
+            return 1
+          }
+          case "${{ matrix.rust_target }}" in
+            aarch64-apple-darwin) ARCH=aarch64 ;;
+            x86_64-apple-darwin) ARCH=x64 ;;
+            *) ARCH="" ;;
+          esac
+          fail=0
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            name="$(basename "$f")"
+            # macOS updater bundle sits on disk as <productName>.app.tar.gz (no
+            # arch); tauri-action uploads it arch-suffixed. Match that name so we
+            # don't create an unsuffixed duplicate asset.
+            case "$name" in
+              *.app.tar.gz|*.app.tar.gz.sig)
+                if [ -n "$ARCH" ]; then
+                  base="${name%%.app.tar.gz*}"; rest="${name#"$base"}"
+                  cp "$f" "$(dirname "$f")/${base}_${ARCH}${rest}"
+                  f="$(dirname "$f")/${base}_${ARCH}${rest}"
+                fi ;;
+            esac
+            upload_one "$f" || { echo "::error::failed to upload $(basename "$f")"; fail=1; }
+          done < <(find "$BUNDLE_DIR" -type f \( \
+            -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \
+            -o -name '*-setup.exe' -o -name '*-setup.exe.sig' \
+            -o -name '*.msi' -o -name '*.msi.sig' \
+            -o -name '*.AppImage' -o -name '*.AppImage.sig' \
+            -o -name '*.deb' -o -name '*.deb.sig' \
+            -o -name '*.rpm' -o -name '*.rpm.sig' \) )
+          exit $fail
+
+      # always() 让本步骤即使 tauri-action 因为 GitHub API 上传 race
+      # (Not Found / delete-a-release-asset) 失败也继续: 此时 cargo 产物已
+      # 经编译完成,便携 exe 仍可上传; job 整体状态仍会 failure 不掩盖问题。
+      - name: Upload Windows portable exe (Server)
+        if: always() && matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          ARCH="${{ matrix.win_arch }}"
+          # cargo 产物名是 crate name (opcuaserver-app.exe), 不是 Tauri productName。
+          # productName 仅出现在 bundle/nsis/ 与 bundle/msi/ 下的安装包文件名里。
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            SRC="target/${{ matrix.rust_target }}/release/opcuaserver-app.exe"
+          else
+            SRC="target/release/opcuaserver-app.exe"
+          fi
+          if [ ! -f "$SRC" ]; then
+            echo "::warning::cargo binary $SRC not found — skipping portable upload"
+            exit 0
+          fi
+          DEST="OPCUAServer_${VERSION}_${ARCH}-portable.exe"
+          cp "$SRC" "$DEST"
+          # `gh release upload --clobber` races against parallel matrix jobs
+          # (404 "delete-a-release-asset"); retry before failing the build.
+          for attempt in 1 2 3 4 5; do
+            if gh release upload "$RELEASE_TAG" "$DEST" --clobber; then exit 0; fi
+            echo "::warning::release upload attempt $attempt failed, retrying in 10s"
+            sleep 10
+          done
+          echo "::error::release upload failed after 5 attempts"; exit 1
+
+  build-master:
+    needs: validate-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: '--target aarch64-apple-darwin'
+            rust_target: aarch64-apple-darwin
+          - platform: macos-latest
+            args: '--target x86_64-apple-darwin'
+            rust_target: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            args: ''
+            rust_target: ''
+          - platform: windows-latest
+            args: ''
+            rust_target: ''
+            win_arch: x64
+          - platform: windows-latest
+            args: '--target aarch64-pc-windows-msvc'
+            rust_target: aarch64-pc-windows-msvc
+            win_arch: arm64
+
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - name: Install dependencies (Ubuntu)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
         with:
-          path: artifacts
+          node-version: 20
 
-      - name: Flatten artifacts
-        shell: bash
-        run: |
-          mkdir -p dist
-          find artifacts -type f -exec cp {} dist/ \;
-          ls -la dist/
-
-      - name: Render release body from CHANGELOG
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          VER="${TAG#v}"
-          REPO="${GITHUB_REPOSITORY}"
-
-          # Extract the section for this version from CHANGELOG.md.
-          awk -v ver="## [$VER]" '
-            BEGIN { found=0 }
-            index($0, ver) == 1 { found=1; next }
-            found && /^## \[/ { exit }
-            found { print }
-          ' CHANGELOG.md > section.md
-
-          if [ ! -s section.md ]; then
-            echo "::warning::No CHANGELOG section found for $TAG; falling back to placeholder."
-            echo "_No changelog entry for $TAG._" > section.md
-          fi
-
-          {
-            echo "## OPCUASim ${TAG}"
-            echo
-            echo "### Downloads"
-            echo
-            echo "| Platform | OPCUAMaster | OPCUAServer |"
-            echo "|----------|-------------|-------------|"
-            base="https://github.com/${REPO}/releases/download/${TAG}"
-            echo "| macOS (Apple Silicon) | [OPCUAMaster-macos-aarch64](${base}/OPCUAMaster-macos-aarch64) | [OPCUAServer-macos-aarch64](${base}/OPCUAServer-macos-aarch64) |"
-            echo "| macOS (Intel) | [OPCUAMaster-macos-x86_64](${base}/OPCUAMaster-macos-x86_64) | [OPCUAServer-macos-x86_64](${base}/OPCUAServer-macos-x86_64) |"
-            echo "| Linux (x86_64) | [OPCUAMaster-linux-x86_64](${base}/OPCUAMaster-linux-x86_64) | [OPCUAServer-linux-x86_64](${base}/OPCUAServer-linux-x86_64) |"
-            echo "| Windows (x86_64) | [OPCUAMaster-windows-x86_64.exe](${base}/OPCUAMaster-windows-x86_64.exe) | [OPCUAServer-windows-x86_64.exe](${base}/OPCUAServer-windows-x86_64.exe) |"
-            echo
-            cat section.md
-            echo
-            echo "---"
-            echo "Full changelog: [CHANGELOG.md](https://github.com/${REPO}/blob/${TAG}/CHANGELOG.md)"
-          } > RELEASE_BODY.md
-
-          echo "----- Rendered release body -----"
-          cat RELEASE_BODY.md
-
-      - name: Generate signed update manifests
-        shell: bash
-        env:
-          OPCUASIM_UPDATE_SIGNING_KEY: ${{ secrets.OPCUASIM_UPDATE_SIGNING_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${OPCUASIM_UPDATE_SIGNING_KEY}" ]; then
-            echo "::error::OPCUASIM_UPDATE_SIGNING_KEY is not configured"
-            exit 1
-          fi
-
-          key_file="$(mktemp)"
-          trap 'rm -f "${key_file}"' EXIT
-          printf '%s' "${OPCUASIM_UPDATE_SIGNING_KEY}" > "${key_file}"
-          chmod 600 "${key_file}"
-          openssl pkey -in "${key_file}" -noout
-
-          version="${GITHUB_REF_NAME#v}"
-          published_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          for binary in dist/OPCUA*; do
-            asset="$(basename "${binary}")"
-            sha256="$(sha256sum "${binary}" | awk '{print $1}')"
-            manifest="${binary}.update.json"
-
-            jq -n \
-              --arg version "${version}" \
-              --rawfile notes section.md \
-              --arg pub_date "${published_at}" \
-              --arg asset "${asset}" \
-              --arg sha256 "${sha256}" \
-              '{version: $version, notes: $notes, pub_date: $pub_date, asset: $asset, sha256: $sha256}' \
-              > "${manifest}"
-
-            openssl pkeyutl -sign -rawin \
-              -inkey "${key_file}" \
-              -in "${manifest}" \
-              -out "${manifest}.sig"
-            test "$(wc -c < "${manifest}.sig")" -eq 64
-          done
-
-          echo "Generated signed manifests:"
-          find dist -maxdepth 1 -name '*.update.json*' -print | sort
-
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          tag_name: ${{ github.ref_name }}
-          name: OPCUASim ${{ github.ref_name }}
-          body_path: RELEASE_BODY.md
-          draft: false
-          prerelease: false
-          files: dist/*
+          targets: ${{ matrix.rust_target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './crates/opcuamaster-app -> ../../target'
+
+      - name: Install frontend dependencies
+        run: npm install
+        working-directory: master-frontend
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: master-frontend
+
+      - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: crates/opcuamaster-app
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: '${{ env.RELEASE_TAG }}'
+          releaseBody: 'See the assets below to download the installers for your platform.'
+          # Keep the release a draft during the build: GitHub's
+          # `releases/latest` skips drafts, so existing users' update checks
+          # keep hitting the previous *complete* release. publish-manifest
+          # clears the draft flag once installers + manifest + body are all in.
+          releaseDraft: true
+          prerelease: false
+          # The project ships its own latest-server/master.json via
+          # gen-update-manifest; tauri-action's latest.json is unused. Being a
+          # single shared filename, every parallel matrix job clobbers it —
+          # the source of the flaky "delete-a-release-asset" 404 race. Skip it.
+          includeUpdaterJson: false
+          args: ${{ matrix.args }}
+
+      # tauri-action bundle 上传无重试,并发竞态会丢包 (见 Server 同名步骤注释)。
+      # 兜底重传本 job 全部 bundle: --clobber + 5 次重试,幂等补齐。
+      - name: Re-upload bundles with retry (Master)
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            BUNDLE_DIR="target/${{ matrix.rust_target }}/release/bundle"
+          else
+            BUNDLE_DIR="target/release/bundle"
+          fi
+          if [ ! -d "$BUNDLE_DIR" ]; then
+            echo "::warning::bundle dir $BUNDLE_DIR not found — skipping bundle re-upload"
+            exit 0
+          fi
+          upload_one() {
+            for attempt in 1 2 3 4 5; do
+              if gh release upload "$RELEASE_TAG" "$1" --clobber; then return 0; fi
+              echo "::warning::upload $(basename "$1") attempt $attempt failed, retrying in 15s"
+              sleep 15
+            done
+            return 1
+          }
+          case "${{ matrix.rust_target }}" in
+            aarch64-apple-darwin) ARCH=aarch64 ;;
+            x86_64-apple-darwin) ARCH=x64 ;;
+            *) ARCH="" ;;
+          esac
+          fail=0
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            name="$(basename "$f")"
+            # macOS updater bundle sits on disk as <productName>.app.tar.gz (no
+            # arch); tauri-action uploads it arch-suffixed. Match that name so we
+            # don't create an unsuffixed duplicate asset.
+            case "$name" in
+              *.app.tar.gz|*.app.tar.gz.sig)
+                if [ -n "$ARCH" ]; then
+                  base="${name%%.app.tar.gz*}"; rest="${name#"$base"}"
+                  cp "$f" "$(dirname "$f")/${base}_${ARCH}${rest}"
+                  f="$(dirname "$f")/${base}_${ARCH}${rest}"
+                fi ;;
+            esac
+            upload_one "$f" || { echo "::error::failed to upload $(basename "$f")"; fail=1; }
+          done < <(find "$BUNDLE_DIR" -type f \( \
+            -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \
+            -o -name '*-setup.exe' -o -name '*-setup.exe.sig' \
+            -o -name '*.msi' -o -name '*.msi.sig' \
+            -o -name '*.AppImage' -o -name '*.AppImage.sig' \
+            -o -name '*.deb' -o -name '*.deb.sig' \
+            -o -name '*.rpm' -o -name '*.rpm.sig' \) )
+          exit $fail
+
+      # always() 让本步骤即使 tauri-action 失败也继续 (同 Server 注释)。
+      - name: Upload Windows portable exe (Master)
+        if: always() && matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          ARCH="${{ matrix.win_arch }}"
+          # cargo 产物名是 crate name (opcuamaster-app.exe), 不是 Tauri productName。
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            SRC="target/${{ matrix.rust_target }}/release/opcuamaster-app.exe"
+          else
+            SRC="target/release/opcuamaster-app.exe"
+          fi
+          if [ ! -f "$SRC" ]; then
+            echo "::warning::cargo binary $SRC not found — skipping portable upload"
+            exit 0
+          fi
+          DEST="OPCUAMaster_${VERSION}_${ARCH}-portable.exe"
+          cp "$SRC" "$DEST"
+          # `gh release upload --clobber` races against parallel matrix jobs
+          # (404 "delete-a-release-asset"); retry before failing the build.
+          for attempt in 1 2 3 4 5; do
+            if gh release upload "$RELEASE_TAG" "$DEST" --clobber; then exit 0; fi
+            echo "::warning::release upload attempt $attempt failed, retrying in 10s"
+            sleep 10
+          done
+          echo "::error::release upload failed after 5 attempts"; exit 1
+
+  publish-manifest:
+    needs: [build-server, build-master]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Un-draft first: this job only runs once every build succeeded, so the
+      # release is now complete enough to go live. Publishing here (rather than
+      # last) lets the manifest scripts run against a normal published release
+      # — `releases/tags/<tag>` and public asset URLs all work. The residual
+      # window where `releases/latest` lacks the update manifest shrinks from
+      # the whole ~10-minute build to the few seconds of manifest generation.
+      - name: Publish release (clear draft flag)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$RELEASE_TAG" --draft=false
+      - name: Install script deps
+        working-directory: scripts
+        run: npm install --no-audit --no-fund
+      - name: Generate manifests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/gen-update-manifest.mjs "$RELEASE_TAG"
+      - name: Upload manifests to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            # 上传 gen-update-manifest 实际产出的全部清单(cn0 + 兜底 + 任何 cnN 变体);
+            # 用 glob 与 MANIFEST_VARIANTS 解耦,增删镜像变体无需再动本 workflow。
+            if gh release upload "$RELEASE_TAG" \
+              latest-server*.json \
+              latest-master*.json \
+              --clobber; then exit 0; fi
+            echo "::warning::manifest upload attempt $attempt failed, retrying in 10s"
+            sleep 10
+          done
+          echo "::error::manifest upload failed after 5 attempts"; exit 1
+
+      - name: Render rich release body from CHANGELOG
+        run: node scripts/build-release-notes.mjs "$RELEASE_TAG"
+
+      - name: Replace release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$RELEASE_TAG" --notes-file RELEASE_BODY.md

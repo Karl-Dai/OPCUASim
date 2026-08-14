@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OPCUAMaster",
+  "version": "0.5.0",
+  "identifier": "com.opcuamaster.dev",
+  "build": {
+    "devUrl": "http://localhost:5179",
+    "beforeDevCommand": { "script": "npm run dev", "cwd": "../../master-frontend" },
+    "frontendDist": "../../master-frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OPCUAMaster",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "signingIdentity": "-"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://gh.carldai.cloud/https://github.com/Karl-Dai/OPCUASim/releases/latest/download/latest-master-cn0.json?app=master&v={{current_version}}&target={{target}}&arch={{arch}}",
+        "https://github.com/Karl-Dai/OPCUASim/releases/latest/download/latest-master.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZDMkUyMkI3QUVFMTQ5MDYKUldRR1NlR3V0eUl1YkNybVQvVWY5c1cvWnFIKy9nSmlocTN4OTh0SUVIcTUxcE9TWEx1YkQ4KzMK"
+    }
+  }
+}
