@@ -18,7 +18,7 @@ jobs:
   tag-and-dispatch:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main'
+      github.event.workflow_run.head_branch == 'master'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +42,7 @@ jobs:
 
           release_branch="$(gh pr list \
             --state merged \
-            --base main \
+            --base master \
             --search "head:automation/release-v$version" \
             --json headRefName \
             --jq ".[] | select(.headRefName == \"automation/release-v$version\") | .headRefName" \
@@ -90,10 +90,10 @@ jobs:
           git fetch origin --tags --force
           if git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null; then
             if ! git merge-base --is-ancestor "$TAG" "$GITHUB_SHA"; then
-              echo "::error::Tag $TAG does not belong to the tested main history"
+              echo "::error::Tag $TAG does not belong to the tested master history"
               exit 1
             fi
-            echo "$TAG already exists on the tested main history; continuing idempotently."
+            echo "$TAG already exists on the tested master history; continuing idempotently."
             exit 0
           fi
           git config user.name "github-actions[bot]"

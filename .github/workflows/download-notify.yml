@@ -49,9 +49,9 @@ jobs:
       - name: Save snapshot
         run: |
           if [ "$HAS_PREV" = "0" ]; then
-            main_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)
+            master_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/master" --jq .object.sha)
             gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f ref=refs/heads/download-stats -f sha="$main_sha" || true
+              -f ref=refs/heads/download-stats -f sha="$master_sha" || true
           elif [ "$(jq 'length' diff.json)" -eq 0 ]; then
             echo "snapshot unchanged"
             exit 0

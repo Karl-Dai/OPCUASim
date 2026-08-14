@@ -43,7 +43,7 @@ jobs:
           if git merge-base --is-ancestor "$latest_tag" HEAD; then
             unreleased="$(git rev-list --count "$latest_tag"..HEAD)"
           else
-            echo "::error::Latest published release $latest_tag is not an ancestor of main"
+            echo "::error::Latest published release $latest_tag is not an ancestor of master"
             exit 1
           fi
 
@@ -63,16 +63,16 @@ jobs:
             echo "prepare=true" >> "$GITHUB_OUTPUT"
           elif [ "$current_version" = "$next_version" ]; then
             node scripts/prepare-release.mjs verify-current
-            echo "v$current_version is already prepared on main and is waiting to be released."
+            echo "v$current_version is already prepared on master and is waiting to be released."
             echo "prepare=false" >> "$GITHUB_OUTPUT"
           else
             echo "::error::App version $current_version is neither latest release ${latest_tag#v} nor next patch $next_version"
             exit 1
           fi
 
-      - name: Stop when main is already fully released
+      - name: Stop when master is already fully released
         if: steps.release.outputs.unreleased == '0'
-        run: echo "main matches ${{ steps.release.outputs.latest_tag }}; no release PR is needed."
+        run: echo "master matches ${{ steps.release.outputs.latest_tag }}; no release PR is needed."
 
       - name: Refuse to overwrite an existing release branch
         id: branch
@@ -140,7 +140,7 @@ jobs:
           cat > "$body_file" <<EOF
           ## Summary
 
-          Nightly automation found ${{ steps.release.outputs.unreleased }} commit(s) on \`main\` after \`$LATEST_TAG\` and prepared patch release \`v$NEXT_VERSION\`.
+          Nightly automation found ${{ steps.release.outputs.unreleased }} commit(s) on \`master\` after \`$LATEST_TAG\` and prepared patch release \`v$NEXT_VERSION\`.
 
           The generated CHANGELOG and in-app release notes are intentionally editable. Review their wording before merging.
 
@@ -154,7 +154,7 @@ jobs:
           - release metadata consistency validation
           EOF
           gh pr create \
-            --base main \
+            --base master \
             --head "$RELEASE_BRANCH" \
             --title "chore(release): prepare v$NEXT_VERSION" \
             --body-file "$body_file" \
