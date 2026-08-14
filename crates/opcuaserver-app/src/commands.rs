@@ -89,7 +89,6 @@ fn build_address_space(state: &AppState) -> AddressSpace {
                 data_type: n.data_type.clone(),
                 writable: n.writable,
                 simulation: n.simulation.clone(),
-                current_value: n.current_value.clone(),
                 eu_range_low: n.eu_range_low,
                 eu_range_high: n.eu_range_high,
             })
@@ -187,6 +186,7 @@ pub(crate) async fn add_folder_impl(
     let folder = ServerFolder {
         node_id: request.node_id,
         display_name: request.display_name,
+        browse_name: None,
         parent_id: request.parent_id,
     };
     if let Some(nm) = state.server.node_manager().await {
@@ -220,12 +220,11 @@ pub(crate) async fn add_node_impl(
     let node = ServerNode {
         node_id: request.node_id,
         display_name: request.display_name,
+        browse_name: None,
         parent_id: request.parent_id,
         data_type: request.data_type,
         writable: request.writable,
         simulation: request.simulation,
-        update_seq: 0,
-        current_value: None,
         eu_range_low: request.eu_range_low,
         eu_range_high: request.eu_range_high,
     };
@@ -411,6 +410,7 @@ mod tests {
             max_subscriptions_per_session: 10,
             history_buffer_size: 10_000,
             event_history_size: 1_000,
+            ..Default::default()
         }
     }
 
@@ -418,12 +418,11 @@ mod tests {
         ServerNode {
             node_id: id.into(),
             display_name: name.into(),
+            browse_name: None,
             parent_id: "i=85".into(),
             data_type: DataType::Double,
             writable,
             simulation,
-            update_seq: 0,
-            current_value: None,
             eu_range_low: 0.0,
             eu_range_high: 100.0,
         }
@@ -536,6 +535,7 @@ mod tests {
         *state.folders.write().unwrap() = vec![ServerFolder {
             node_id: "MainFolder".into(),
             display_name: "MainFolder".into(),
+            browse_name: None,
             parent_id: "i=85".into(),
         }];
         *state.nodes.write().unwrap() = vec![

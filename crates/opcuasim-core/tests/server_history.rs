@@ -26,12 +26,14 @@ fn server_config() -> ServerConfig {
         max_subscriptions_per_session: 10,
         history_buffer_size: 10_000,
         event_history_size: 1_000,
+        ..Default::default()
     }
 }
 
 fn sine_node() -> ServerNode {
     ServerNode {
         node_id: "Demo.Sine".into(),
+        browse_name: None,
         display_name: "Sine".into(),
         parent_id: "i=85".into(),
         data_type: DataType::Double,
@@ -42,8 +44,7 @@ fn sine_node() -> ServerNode {
             period_ms: 4000,
             interval_ms: 100,
         },
-        update_seq: 0,
-        current_value: None,
+
         eu_range_low: 0.0,
         eu_range_high: 100.0,
     }
@@ -52,13 +53,13 @@ fn sine_node() -> ServerNode {
 fn writable_node() -> ServerNode {
     ServerNode {
         node_id: "Demo.Setpoint".into(),
+        browse_name: None,
         display_name: "Setpoint".into(),
         parent_id: "i=85".into(),
         data_type: DataType::Double,
         writable: true,
         simulation: SimulationMode::Static { value: "0".into() },
-        update_seq: 0,
-        current_value: None,
+
         eu_range_low: 0.0,
         eu_range_high: 100.0,
     }

@@ -37,10 +37,12 @@ async fn polling_reads_live_values() {
                 max_subscriptions_per_session: 10,
                 history_buffer_size: 10_000,
                 event_history_size: 1_000,
+                ..Default::default()
             },
             &[],
             &[ServerNode {
                 node_id: "Demo.Ramp".into(),
+                browse_name: None,
                 display_name: "Ramp".into(),
                 parent_id: "i=85".into(),
                 data_type: DataType::Double,
@@ -53,8 +55,7 @@ async fn polling_reads_live_values() {
                     mode: LinearMode::Repeat,
                     interval_ms: 100,
                 },
-                update_seq: 0,
-                current_value: None,
+
                 eu_range_low: 0.0,
                 eu_range_high: 100.0,
             }],

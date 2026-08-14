@@ -220,12 +220,14 @@ impl Default for SimulationMode {
 pub struct ServerNode {
     pub node_id: String,
     pub display_name: String,
+    /// Optional OPC UA browse name. Defaults to the display name with spaces
+    /// removed when not set.
+    #[serde(default)]
+    pub browse_name: Option<String>,
     pub parent_id: String,
     pub data_type: DataType,
     pub writable: bool,
     pub simulation: SimulationMode,
-    pub update_seq: u64,
-    pub current_value: Option<String>,
     /// EU Range property (low). Default 0.0; required for Percent deadband.
     #[serde(default)]
     pub eu_range_low: f64,
@@ -243,10 +245,17 @@ fn default_eu_range_high() -> f64 {
 pub struct ServerFolder {
     pub node_id: String,
     pub display_name: String,
+    /// Optional OPC UA browse name. Defaults to the display name with spaces
+    /// removed when not set.
+    #[serde(default)]
+    pub browse_name: Option<String>,
     pub parent_id: String,
 }
 
 /// User role for access control.
+///
+/// NOTE: Roles are currently metadata only and not enforced as `UserAccessLevel`
+/// on nodes. Full RBAC requires a custom async-opcua `AuthManager` (follow-up TODO).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum UserRole {
     ReadOnly,
@@ -255,6 +264,10 @@ pub enum UserRole {
 }
 
 /// A user account for server authentication.
+///
+/// NOTE: `password` is stored in plaintext in `.opcuaproj` files. Do not
+/// distribute project files containing real credentials. Switching to argon2
+/// hashing requires a custom async-opcua `AuthManager` (follow-up TODO).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserAccount {
     pub username: String,
@@ -266,6 +279,12 @@ pub struct UserAccount {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub name: String,
+    #[serde(default = "default_application_uri")]
+    pub application_uri: String,
+    /// Bind host. Defaults to `127.0.0.1` (secure by default); use `0.0.0.0`
+    /// to expose the server on the local network.
+    #[serde(default = "default_host")]
+    pub host: String,
     pub endpoint_url: String,
     pub port: u16,
     pub security_policies: Vec<String>,
@@ -274,6 +293,19 @@ pub struct ServerConfig {
     pub anonymous_enabled: bool,
     pub max_sessions: u32,
     pub max_subscriptions_per_session: u32,
+    /// Optional PEM/DER application certificate. When set together with
+    /// `private_key_path`, the server uses it instead of an auto-generated
+    /// self-signed keypair.
+    #[serde(default)]
+    pub certificate_path: Option<String>,
+    /// Optional private key matching `certificate_path`.
+    #[serde(default)]
+    pub private_key_path: Option<String>,
+    /// Automatically trust client certificates that are not in the trusted
+    /// store. `true` keeps first-run local connections frictionless; disable
+    /// for stricter production-style certificate validation.
+    #[serde(default = "default_trust_client_certs")]
+    pub trust_client_certs: bool,
     /// Per-node history ring buffer capacity. 0 disables history recording.
     #[serde(default = "default_history_buffer_size")]
     pub history_buffer_size: usize,
@@ -282,18 +314,35 @@ pub struct ServerConfig {
     pub event_history_size: usize,
 }
 
+fn default_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_application_uri() -> String {
+    "urn:opcuasim:server".to_string()
+}
+
+fn default_trust_client_certs() -> bool {
+    true
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             name: "OPCUAServer Simulator".to_string(),
-            endpoint_url: "opc.tcp://0.0.0.0:4840".to_string(),
+            application_uri: default_application_uri(),
+            host: default_host(),
+            endpoint_url: format!("opc.tcp://{}:4840", default_host()),
             port: 4840,
-            security_policies: vec!["None".to_string()],
-            security_modes: vec!["None".to_string()],
+            security_policies: vec!["Basic256Sha256".to_string()],
+            security_modes: vec!["SignAndEncrypt".to_string()],
             users: Vec::new(),
             anonymous_enabled: true,
             max_sessions: 100,
             max_subscriptions_per_session: 50,
+            certificate_path: None,
+            private_key_path: None,
+            trust_client_certs: default_trust_client_certs(),
             history_buffer_size: default_history_buffer_size(),
             event_history_size: default_event_history_size(),
         }

@@ -1711,6 +1711,7 @@ mod tests {
             max_subscriptions_per_session: 10,
             history_buffer_size: 10_000,
             event_history_size: 1_000,
+            ..Default::default()
         }
     }
 
@@ -1718,6 +1719,7 @@ mod tests {
         vec![ServerFolder {
             node_id: "MyFolder".into(),
             display_name: "MyFolder".into(),
+            browse_name: None,
             parent_id: "i=85".into(),
         }]
     }
@@ -1727,20 +1729,20 @@ mod tests {
             ServerNode {
                 node_id: "Demo.Static".into(),
                 display_name: "Static".into(),
+                browse_name: None,
                 parent_id: "MyFolder".into(),
                 data_type: DataType::Double,
                 writable: false,
                 simulation: SimulationMode::Static {
                     value: "3.14".into(),
                 },
-                update_seq: 0,
-                current_value: None,
                 eu_range_low: 0.0,
                 eu_range_high: 100.0,
             },
             ServerNode {
                 node_id: "Demo.Sine".into(),
                 display_name: "Sine".into(),
+                browse_name: None,
                 parent_id: "MyFolder".into(),
                 data_type: DataType::Double,
                 writable: false,
@@ -1750,20 +1752,17 @@ mod tests {
                     period_ms: 2000,
                     interval_ms: 100,
                 },
-                update_seq: 0,
-                current_value: None,
                 eu_range_low: -10.0,
                 eu_range_high: 10.0,
             },
             ServerNode {
                 node_id: "Demo.Setpoint".into(),
                 display_name: "Setpoint".into(),
+                browse_name: None,
                 parent_id: "MyFolder".into(),
                 data_type: DataType::Double,
                 writable: true,
                 simulation: SimulationMode::Static { value: "0".into() },
-                update_seq: 0,
-                current_value: None,
                 eu_range_low: 0.0,
                 eu_range_high: 100.0,
             },

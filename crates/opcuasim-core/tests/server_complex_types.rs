@@ -28,12 +28,14 @@ fn server_config() -> ServerConfig {
         max_subscriptions_per_session: 10,
         history_buffer_size: 10_000,
         event_history_size: 1_000,
+        ..Default::default()
     }
 }
 
 fn folders() -> Vec<ServerFolder> {
     vec![ServerFolder {
         node_id: "CT".into(),
+        browse_name: None,
         display_name: "ComplexTypes".into(),
         parent_id: "i=85".into(),
     }]
@@ -43,6 +45,7 @@ fn nodes() -> Vec<ServerNode> {
     vec![
         ServerNode {
             node_id: "CT.DoubleArr".into(),
+            browse_name: None,
             display_name: "DoubleArr".into(),
             parent_id: "CT".into(),
             data_type: DataType::Array {
@@ -52,13 +55,13 @@ fn nodes() -> Vec<ServerNode> {
             simulation: SimulationMode::Static {
                 value: "0,0,0,0".into(),
             },
-            update_seq: 0,
-            current_value: None,
+
             eu_range_low: 0.0,
             eu_range_high: 100.0,
         },
         ServerNode {
             node_id: "CT.Matrix2x3".into(),
+            browse_name: None,
             display_name: "Matrix2x3".into(),
             parent_id: "CT".into(),
             data_type: DataType::Array2D {
@@ -69,13 +72,13 @@ fn nodes() -> Vec<ServerNode> {
             simulation: SimulationMode::Static {
                 value: "1,2,3;4,5,6".into(),
             },
-            update_seq: 0,
-            current_value: None,
+
             eu_range_low: 0.0,
             eu_range_high: 100.0,
         },
         ServerNode {
             node_id: "CT.Color".into(),
+            browse_name: None,
             display_name: "Color".into(),
             parent_id: "CT".into(),
             data_type: DataType::Enum {
@@ -84,13 +87,13 @@ fn nodes() -> Vec<ServerNode> {
             },
             writable: true,
             simulation: SimulationMode::Static { value: "0".into() },
-            update_seq: 0,
-            current_value: None,
+
             eu_range_low: 0.0,
             eu_range_high: 100.0,
         },
         ServerNode {
             node_id: "CT.Sample".into(),
+            browse_name: None,
             display_name: "Sample".into(),
             parent_id: "CT".into(),
             data_type: DataType::Structure {
@@ -115,8 +118,7 @@ fn nodes() -> Vec<ServerNode> {
                 mode: LinearMode::Repeat,
                 interval_ms: 1000,
             },
-            update_seq: 0,
-            current_value: None,
+
             eu_range_low: 0.0,
             eu_range_high: 100.0,
         },

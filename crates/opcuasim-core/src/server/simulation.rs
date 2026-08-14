@@ -8,7 +8,9 @@ use tokio_util::sync::CancellationToken;
 
 use opcua_server::node_manager::memory::{InMemoryNodeManager, InMemoryNodeManagerImpl};
 use opcua_server::SubscriptionCache;
-use opcua_types::{DataValue, DateTime, NodeId, NumericRange};
+use opcua_types::{
+    AttributeId, DataEncoding, DataValue, DateTime, NodeId, NumericRange, TimestampsToReturn,
+};
 
 use super::address_space::{f64_to_variant, variant_to_display_string};
 use super::generator::generate_value;
@@ -42,6 +44,9 @@ pub struct SimulationEngine {
     alarm_states: Arc<RwLock<HashMap<String, bool>>>,
     event_notifier: Arc<RwLock<Option<EventNotifier>>>,
     custom_types: Arc<RwLock<HashMap<String, NodeId>>>,
+    /// Static nodes (no auto-generation) tracked for address-space polling so
+    /// that client writes are reflected in the frontend.
+    static_node_ids: Arc<RwLock<Vec<(String, NodeId)>>>,
 }
 
 impl SimulationEngine {
@@ -55,6 +60,7 @@ impl SimulationEngine {
             alarm_states: Arc::new(RwLock::new(HashMap::new())),
             event_notifier: Arc::new(RwLock::new(None)),
             custom_types: Arc::new(RwLock::new(HashMap::new())),
+            static_node_ids: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -74,12 +80,15 @@ impl SimulationEngine {
     /// Register nodes for simulation. Must be called before start().
     pub async fn register_nodes(&self, nodes: &[ServerNode], namespace_index: u16) {
         let mut states = self.node_states.write().await;
+        let mut static_ids = self.static_node_ids.write().await;
         for node in nodes {
-            if node.simulation.interval_ms().is_none() {
-                continue; // Skip Static nodes
-            }
             let opcua_node_id = super::address_space::parse_node_id(&node.node_id)
                 .unwrap_or_else(|_| NodeId::new(namespace_index, node.node_id.as_str()));
+            if node.simulation.interval_ms().is_none() {
+                // Static node: track for address-space polling (reflects client writes).
+                static_ids.push((node.node_id.clone(), opcua_node_id));
+                continue;
+            }
             states.insert(
                 node.node_id.clone(),
                 NodeSimState {
@@ -108,6 +117,7 @@ impl SimulationEngine {
         let node_states = self.node_states.clone();
         let update_seq = self.update_seq.clone();
         let current_values = self.current_values.clone();
+        let static_node_ids = self.static_node_ids.clone();
         let history_store = self.history_store.clone();
         let alarm_states = self.alarm_states.clone();
         let event_notifier = self.event_notifier.clone();
@@ -128,6 +138,55 @@ impl SimulationEngine {
                 "SimulationEngine starting: {} interval groups",
                 groups.len()
             );
+
+            // Spawn a polling task for Static nodes so client writes are
+            // reflected in current_values (and thus the frontend). Static nodes
+            // have no auto-generation, so the engine only learns of new values
+            // by reading the address space.
+            let nm_static = node_manager.clone();
+            let vals_static = current_values.clone();
+            let seq_static = update_seq.clone();
+            let static_ids = static_node_ids.read().await.clone();
+            let token_static = cancel_token.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_millis(500));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tokio::select! {
+                        _ = token_static.cancelled() => break,
+                        _ = interval.tick() => {
+                            let changed: Vec<(String, String)> = {
+                                let guard = nm_static.address_space().read();
+                                let mut c = Vec::new();
+                                for (nid_str, nid) in &static_ids {
+                                    if let Some(node) = guard.find(nid) {
+                                        if let Some(dv) = node.as_node().get_attribute_max_age(
+                                            TimestampsToReturn::Server,
+                                            AttributeId::Value,
+                                            &NumericRange::None,
+                                            &DataEncoding::Binary,
+                                            0.0,
+                                        ) {
+                                            if let Some(v) = &dv.value {
+                                                c.push((nid_str.clone(), format!("{}", v)));
+                                            }
+                                        }
+                                    }
+                                }
+                                c
+                            };
+                            if !changed.is_empty() {
+                                let mut cv = vals_static.write().await;
+                                let mut s = seq_static.write().await;
+                                for (nid, val) in changed {
+                                    *s += 1;
+                                    cv.insert(nid, (val, *s));
+                                }
+                            }
+                        }
+                    }
+                }
+            });
 
             let mut handles = Vec::new();
             let start_time = Instant::now();
@@ -247,7 +306,9 @@ impl SimulationEngine {
 
                                 // Batch write to address space
                                 if !updates.is_empty() {
-                                    let _ = nm.set_values(&subs, updates.into_iter());
+                                    if let Err(e) = nm.set_values(&subs, updates.into_iter()) {
+                                        log::warn!("Failed to set simulation values: {:?}", e);
+                                    }
 
                                     // Update current_values for frontend polling
                                     let mut cv = vals.write().await;

@@ -32,6 +32,7 @@ fn server_config() -> ServerConfig {
         max_subscriptions_per_session: 10,
         history_buffer_size: 10_000,
         event_history_size: 1_000,
+        ..Default::default()
     }
 }
 
@@ -40,6 +41,7 @@ fn server_config() -> ServerConfig {
 fn alarm_sine_node() -> ServerNode {
     ServerNode {
         node_id: "Demo.AlarmSine".into(),
+        browse_name: None,
         display_name: "AlarmSine".into(),
         parent_id: "i=85".into(),
         data_type: DataType::Double,
@@ -50,8 +52,7 @@ fn alarm_sine_node() -> ServerNode {
             period_ms: 4000,
             interval_ms: 200,
         },
-        update_seq: 0,
-        current_value: None,
+
         // EU range 0..1 with amplitude 10 guarantees the sine value
         // regularly exceeds the range -> threshold alarm events fire.
         eu_range_low: 0.0,

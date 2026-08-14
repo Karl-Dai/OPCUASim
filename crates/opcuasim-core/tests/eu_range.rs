@@ -41,10 +41,12 @@ async fn eu_range_property_and_percent_deadband() {
                 max_subscriptions_per_session: 10,
                 history_buffer_size: 10_000,
                 event_history_size: 1_000,
+                ..Default::default()
             },
             &[],
             &[ServerNode {
                 node_id: "Demo.Sine".into(),
+                browse_name: None,
                 display_name: "Sine".into(),
                 parent_id: "i=85".into(),
                 data_type: DataType::Double,
@@ -55,8 +57,7 @@ async fn eu_range_property_and_percent_deadband() {
                     period_ms: 4000,
                     interval_ms: 200,
                 },
-                update_seq: 0,
-                current_value: None,
+
                 eu_range_low: -50.0,
                 eu_range_high: 50.0,
             }],

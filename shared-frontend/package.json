@@ -1,0 +1,5 @@
+{
+  "name": "opcuasim-shared-frontend",
+  "private": true,
+  "type": "module"
+}

@@ -1,3 +1,4 @@
+use evalexpr::ContextWithMutableVariables;
 use rand::Rng;
 
 use super::models::{DataType, SimulationMode};
@@ -37,9 +38,10 @@ pub fn generate_value(mode: &SimulationMode, elapsed_secs: f64, iteration: u64) 
                 super::models::LinearMode::Repeat => Some(min + (raw - min).rem_euclid(range)),
                 super::models::LinearMode::Bounce => {
                     let pos = (raw - min) / range;
-                    let cycle = pos.floor() as i64;
                     let frac = pos - pos.floor();
-                    if cycle % 2 == 0 {
+                    // Use f64 modulo to avoid i64 overflow on extreme iterations.
+                    let cycle = pos.floor().rem_euclid(2.0);
+                    if cycle < 1.0 {
                         Some(min + frac * range)
                     } else {
                         Some(max - frac * range)
@@ -47,9 +49,17 @@ pub fn generate_value(mode: &SimulationMode, elapsed_secs: f64, iteration: u64) 
                 }
             }
         }
-        SimulationMode::Script { .. } => {
-            // Phase 2: evalexpr integration
-            Some(0.0)
+        SimulationMode::Script { expression, .. } => {
+            let mut context = evalexpr::HashMapContext::new();
+            let _ = context.set_value("t".into(), evalexpr::Value::Float(elapsed_secs));
+            let _ = context.set_value("iteration".into(), evalexpr::Value::Float(iteration as f64));
+            match evalexpr::eval_number_with_context(expression, &context) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    log::warn!("Script expression '{}' eval failed: {}", expression, e);
+                    None
+                }
+            }
         }
     }
 }
@@ -77,5 +87,44 @@ pub fn f64_to_string(value: f64, data_type: &DataType) -> String {
         // build structured ExtensionObject values); fall back to the raw f64
         // so callers still receive a deterministic string.
         DataType::Structure { .. } => format!("{:.6}", value),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn script(expression: &str) -> SimulationMode {
+        SimulationMode::Script {
+            expression: expression.into(),
+            interval_ms: 1000,
+        }
+    }
+
+    #[test]
+    fn script_uses_t_and_iteration_variables() {
+        let v = generate_value(&script("t * 2 + iteration"), 3.0, 1).unwrap();
+        assert!((v - 7.0).abs() < 1e-9, "t*2+iteration = 7.0, got {v}");
+    }
+
+    #[test]
+    fn script_invalid_expression_returns_none() {
+        assert!(generate_value(&script("not valid ++"), 1.0, 0).is_none());
+    }
+
+    #[test]
+    fn linear_bounce_survives_extreme_iterations() {
+        let mode = SimulationMode::Linear {
+            start: 0.0,
+            step: 1.0,
+            min: 0.0,
+            max: 10.0,
+            mode: super::super::models::LinearMode::Bounce,
+            interval_ms: 100,
+        };
+        // i64::MAX iterations would overflow `cycle as i64`; the f64 modulo
+        // must stay within [0, 10].
+        let v = generate_value(&mode, 0.0, i64::MAX as u64).unwrap();
+        assert!((0.0..=10.0).contains(&v), "bounce value out of range: {v}");
     }
 }

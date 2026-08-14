@@ -13,7 +13,7 @@ const { addressSpace, selectedNodeId, selectNode, currentValues, removeNode } = 
 const multiSelected = ref(new Set<string>())
 
 function valueFor(node: NodeRow): string {
-  return currentValues.value.get(node.node_id) ?? node.current_value ?? '—'
+  return currentValues.value.get(node.node_id) ?? '—'
 }
 
 function isSelected(node: NodeRow): boolean {

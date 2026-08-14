@@ -17,7 +17,7 @@ const node = computed<NodeRow | null>(() => {
 
 const currentValue = computed(() => {
   if (!node.value) return '—'
-  return currentValues.value.get(node.value.node_id) ?? node.value.current_value ?? '—'
+  return currentValues.value.get(node.value.node_id) ?? '—'
 })
 
 function num(e: Event): number {
