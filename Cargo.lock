@@ -3115,7 +3115,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "opcuamaster-app"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "async-opcua-types",
  "chrono",
@@ -3138,7 +3138,7 @@ dependencies = [
 
 [[package]]
 name = "opcuaserver-app"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "env_logger",
