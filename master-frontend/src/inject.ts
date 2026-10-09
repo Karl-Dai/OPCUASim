@@ -8,9 +8,11 @@ import type {
   MonitoredNodeReq,
   MonitoredRow,
   NodeGroupDto,
+  PersistenceStatus,
 } from './types'
 
 export interface MasterContext {
+  persistenceStatus: Ref<PersistenceStatus>
   connections: Ref<ConnectionInfo[]>
   selectedConnectionId: Ref<string | null>
   selectedConnection: ComputedRef<ConnectionInfo | null>
@@ -31,6 +33,7 @@ export interface MasterContext {
   disconnect: (connId: string) => Promise<void>
   deleteConnection: (connId: string) => Promise<void>
   createConnection: (request: CreateConnectionRequest) => Promise<ConnectionInfo>
+  renameConnection: (connId: string, name: string) => Promise<void>
   loadProject: (path: string) => Promise<void>
   saveProject: (path: string) => Promise<void>
 

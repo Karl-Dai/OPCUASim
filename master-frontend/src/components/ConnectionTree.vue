@@ -6,6 +6,7 @@ import { showConfirm } from '@shared/composables/useDialog'
 import { nodeIcon } from '../domain'
 import MethodCallDialog from './MethodCallDialog.vue'
 import { useMasterContext } from '../inject'
+import { useConnectionRename } from '../useConnectionRename'
 import type {
   BrowseItem,
   ConnectionInfo,
@@ -16,6 +17,7 @@ import type {
 } from '../types'
 
 const { t } = useI18n()
+const { requestRename } = useConnectionRename()
 const {
   connections,
   selectedConnectionId,
@@ -330,7 +332,11 @@ function selectConnectionNode(conn: ConnectionInfo) {
             @click.stop="stateFor(conn.id).expanded = !stateFor(conn.id).expanded"
           >▸</button>
           <span class="state-dot" :style="{ background: stateChip(conn.state).color }" />
-          <span class="conn-label">{{ conn.name }}</span>
+          <span
+            class="conn-label"
+            :title="t('toolbar.renameConnection')"
+            @dblclick.stop="requestRename(conn)"
+          >{{ conn.name }}</span>
           <span class="conn-state">{{ stateChip(conn.state).label }}</span>
         </div>
 

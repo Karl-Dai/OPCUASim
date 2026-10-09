@@ -22,6 +22,7 @@ import type {
   MonitoredRow,
   MonitoredSnapshot,
   NodeGroupDto,
+  PersistenceStatus,
 } from './types'
 
 const { t } = useI18n()
@@ -34,6 +35,7 @@ const connections = ref<ConnectionInfo[]>([])
 const selectedConnectionId = ref<string | null>(null)
 const selectedNodeId = ref<string | null>(null)
 const groups = ref<NodeGroupDto[]>([])
+const persistenceStatus = ref<PersistenceStatus>({ enabled: false, error: null })
 
 const selectedConnection = computed<ConnectionInfo | null>(
   () => connections.value.find((c) => c.id === selectedConnectionId.value) ?? null,
@@ -74,6 +76,7 @@ async function refreshConnections(): Promise<void> {
       historyTarget.value = null
       if (activeTab.value === 'history') activeTab.value = 'data'
     }
+    if (!selectedConnectionId.value && list[0]) selectConnection(list[0].id)
   } catch (error) {
     console.warn('list_connections failed', error)
   }
@@ -84,6 +87,14 @@ async function refreshGroups(): Promise<void> {
     groups.value = await invoke<NodeGroupDto[]>('list_groups')
   } catch (error) {
     console.warn('list_groups failed', error)
+  }
+}
+
+async function refreshPersistenceStatus(): Promise<void> {
+  try {
+    persistenceStatus.value = await invoke<PersistenceStatus>('get_persistence_status')
+  } catch (error) {
+    persistenceStatus.value = { enabled: false, error: String(error) }
   }
 }
 
@@ -149,6 +160,12 @@ async function loadProject(path: string): Promise<void> {
 
 async function saveProject(path: string): Promise<void> {
   await invoke('save_project', { path })
+}
+
+async function renameConnection(connId: string, name: string): Promise<void> {
+  await invoke('rename_connection', { connectionId: connId, name })
+  const conn = connections.value.find((c) => c.id === connId)
+  if (conn) conn.name = name
 }
 
 async function addMonitoredNodes(connId: string, nodes: MonitoredNodeReq[]): Promise<void> {
@@ -235,20 +252,23 @@ async function pollMonitor(): Promise<void> {
 }
 
 let monitorTimer: number | null = null
+let persistenceTimer: number | null = null
 let unlistenConnState: (() => void) | null = null
 
 onMounted(async () => {
-  await Promise.all([refreshConnections(), refreshGroups()])
+  await Promise.all([refreshConnections(), refreshGroups(), refreshPersistenceStatus()])
 
   unlistenConnState = await listen<{ id: string; state: string }>('connection-state', (event) => {
     applyConnectionState(event.payload.id, event.payload.state)
   })
 
   monitorTimer = window.setInterval(pollMonitor, 500)
+  persistenceTimer = window.setInterval(refreshPersistenceStatus, 2000)
 })
 
 onUnmounted(() => {
   unlistenConnState?.()
+  if (persistenceTimer !== null) clearInterval(persistenceTimer)
   if (monitorTimer !== null) {
     clearInterval(monitorTimer)
     monitorTimer = null
@@ -260,6 +280,7 @@ onUnmounted(() => {
 // ---------------------------------------------------------------------------
 
 const context: MasterContext = {
+  persistenceStatus,
   connections,
   selectedConnectionId,
   selectedConnection,
@@ -277,6 +298,7 @@ const context: MasterContext = {
   disconnect,
   deleteConnection,
   createConnection,
+  renameConnection,
   loadProject,
   saveProject,
   addMonitoredNodes,

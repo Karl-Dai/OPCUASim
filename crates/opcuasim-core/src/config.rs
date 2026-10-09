@@ -1,4 +1,4 @@
-use crate::node::{AccessMode, NodeGroup};
+use crate::node::{AccessMode, DataChangeFilterCfg, NodeGroup};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -46,10 +46,18 @@ pub struct MonitoredNodeConfig {
     pub display_name: String,
     pub access_mode: AccessMode,
     pub group_id: Option<String>,
+    #[serde(default)]
+    pub data_type: String,
+    #[serde(default)]
+    pub browse_path: String,
+    #[serde(default)]
+    pub filter: Option<DataChangeFilterCfg>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionProjectEntry {
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub endpoint_url: String,
     pub security_policy: String,
@@ -95,6 +103,7 @@ mod tests {
     fn test_project_file_roundtrip() {
         let mut project = ProjectFile::new_master();
         project.connections.push(ConnectionProjectEntry {
+            id: "test-connection".into(),
             name: "Test".to_string(),
             endpoint_url: "opc.tcp://localhost:4840".to_string(),
             security_policy: "None".to_string(),
@@ -108,6 +117,9 @@ mod tests {
                     interval_ms: 1000.0,
                 },
                 group_id: None,
+                data_type: "Double".into(),
+                browse_path: String::new(),
+                filter: None,
             }],
         });
         project.groups.push(NodeGroup {

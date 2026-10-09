@@ -3,7 +3,7 @@ use std::sync::Arc;
 use opcuasim_core::browse;
 use opcuasim_core::cert_manager::{self, CertRole};
 use opcuasim_core::client::{ConnectionState, OpcUaConnection};
-use opcuasim_core::config::{AuthConfig, ConnectionConfig, ConnectionProjectEntry, ProjectFile};
+use opcuasim_core::config::{AuthConfig, ConnectionConfig};
 use opcuasim_core::discovery;
 use opcuasim_core::events::EventItem as CoreEventItem;
 use opcuasim_core::history::{self, HistoryDataPoint};
@@ -231,6 +231,25 @@ fn monitored_node_to_row(n: MonitoredNode) -> MonitoredRow {
     }
 }
 
+fn merge_configured_nodes(
+    configured: Vec<MonitoredNode>,
+    live: Vec<MonitoredNode>,
+) -> Vec<MonitoredRow> {
+    let mut live: std::collections::HashMap<_, _> =
+        live.into_iter().map(|n| (n.node_id.clone(), n)).collect();
+    configured
+        .into_iter()
+        .map(|config| {
+            let mut node = live
+                .remove(&config.node_id)
+                .unwrap_or_else(|| config.clone());
+            node.display_name = config.display_name;
+            node.access_mode = config.access_mode;
+            monitored_node_to_row(node)
+        })
+        .collect()
+}
+
 fn browse_item_to_dto(item: BrowseResultItem) -> BrowseItem {
     BrowseItem {
         node_id: item.node_id,
@@ -375,6 +394,17 @@ async fn add_monitored_core(
     conn_id: &str,
     nodes: Vec<MonitoredNode>,
 ) -> Result<(), String> {
+    for node in &nodes {
+        let valid = match node.access_mode {
+            AccessMode::Subscription { interval_ms } => {
+                interval_ms.is_finite() && interval_ms > 0.0
+            }
+            AccessMode::Polling { interval_ms } => interval_ms > 0,
+        };
+        if !valid {
+            return Err(format!("Invalid monitoring interval for {}", node.node_id));
+        }
+    }
     let (sub_nodes, poll_nodes): (Vec<MonitoredNode>, Vec<MonitoredNode>) = nodes
         .into_iter()
         .partition(|n| matches!(n.access_mode, AccessMode::Subscription { .. }));
@@ -382,9 +412,19 @@ async fn add_monitored_core(
     {
         let mut conns = state.connections.write().map_err(|e| e.to_string())?;
         let entry = conns.get_mut(conn_id).ok_or("Connection not found")?;
+        let ids: Vec<_> = sub_nodes
+            .iter()
+            .chain(&poll_nodes)
+            .map(|n| &n.node_id)
+            .collect();
+        entry
+            .pending_subscriptions
+            .retain(|n| !ids.contains(&&n.node_id));
+        entry.pending_polling.retain(|n| !ids.contains(&&n.node_id));
         entry.pending_subscriptions.extend(sub_nodes.clone());
         entry.pending_polling.extend(poll_nodes.clone());
     }
+    state.autosave()?;
 
     let (sub_mgr, poll_mgr, session_holder) = {
         let conns = state.connections.read().map_err(|e| e.to_string())?;
@@ -583,6 +623,7 @@ pub(crate) fn create_connection_impl(
         conns.insert(
             id.clone(),
             ConnectionEntry {
+                name: config.name.clone(),
                 connection,
                 subscription_mgr: SubscriptionManager::new(),
                 polling_mgr: Arc::new(PollingManager::new(session_holder)),
@@ -592,6 +633,7 @@ pub(crate) fn create_connection_impl(
         );
     }
 
+    state.autosave()?;
     Ok(ConnectionInfo {
         id,
         name: config.name,
@@ -646,6 +688,7 @@ pub(crate) async fn connect_impl(
                 json!({ "endpoint_url": conn_arc.config.endpoint_url.clone() }),
                 "Connected",
             );
+            restore_monitoring(connection_id, state).await;
             Ok(())
         }
         Err(e) => {
@@ -752,7 +795,6 @@ pub async fn connect(
         conn_for_loop.start_reconnect_loop(on_state_change).await;
     });
 
-    restore_monitoring(&connection_id, state.inner()).await;
     Ok(())
 }
 
@@ -825,7 +867,7 @@ pub(crate) async fn delete_connection_impl(
         let mut conns = state.connections.write().map_err(|e| e.to_string())?;
         conns.remove(connection_id).ok_or("Connection not found")?;
     }
-    Ok(())
+    state.autosave()
 }
 
 #[tauri::command]
@@ -834,6 +876,33 @@ pub async fn delete_connection(
     connection_id: String,
 ) -> Result<(), String> {
     delete_connection_impl(state.inner(), &connection_id).await
+}
+
+pub(crate) fn rename_connection_impl(
+    state: &AppState,
+    connection_id: &str,
+    name: &str,
+) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Connection name cannot be empty".into());
+    }
+    let mut conns = state.connections.write().map_err(|e| e.to_string())?;
+    let entry = conns
+        .get_mut(connection_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    entry.name = name.to_string();
+    drop(conns);
+    state.autosave()
+}
+
+#[tauri::command]
+pub fn rename_connection(
+    state: State<'_, AppState>,
+    connection_id: String,
+    name: String,
+) -> Result<(), String> {
+    rename_connection_impl(state.inner(), &connection_id, &name)
 }
 
 pub(crate) async fn list_connections_impl(state: &AppState) -> Result<Vec<ConnectionInfo>, String> {
@@ -848,7 +917,10 @@ pub(crate) async fn list_connections_impl(state: &AppState) -> Result<Vec<Connec
             .map(|(id, entry)| {
                 (
                     id.clone(),
-                    entry.connection.config.clone(),
+                    ConnectionConfig {
+                        name: entry.name.clone(),
+                        ..entry.connection.config.clone()
+                    },
                     entry.connection.state.clone(),
                 )
             })
@@ -1086,11 +1158,17 @@ pub async fn remove_monitored_nodes(
     connection_id: String,
     node_ids: Vec<String>,
 ) -> Result<(), String> {
+    remove_monitored_nodes_impl(state.inner(), &connection_id, &node_ids).await
+}
+
+async fn remove_monitored_nodes_impl(
+    state: &AppState,
+    connection_id: &str,
+    node_ids: &[String],
+) -> Result<(), String> {
     let (sub_mgr, poll_mgr) = {
         let mut conns = state.connections.write().map_err(|e| e.to_string())?;
-        let entry = conns
-            .get_mut(&connection_id)
-            .ok_or("Connection not found")?;
+        let entry = conns.get_mut(connection_id).ok_or("Connection not found")?;
         entry
             .pending_subscriptions
             .retain(|n| !node_ids.contains(&n.node_id));
@@ -1099,12 +1177,13 @@ pub async fn remove_monitored_nodes(
             .retain(|n| !node_ids.contains(&n.node_id));
         (entry.subscription_mgr.clone(), entry.polling_mgr.clone())
     };
+    state.autosave()?;
 
     sub_mgr
-        .remove_nodes(&node_ids)
+        .remove_nodes(node_ids)
         .await
         .map_err(|e| e.to_string())?;
-    for node_id in &node_ids {
+    for node_id in node_ids {
         poll_mgr.remove_polling_node(node_id).await;
     }
     Ok(())
@@ -1115,13 +1194,13 @@ pub(crate) async fn get_monitored_nodes_since_impl(
     connection_id: &str,
     seq: u64,
 ) -> Result<MonitoredSnapshot, String> {
-    let sub_mgr = {
+    let (sub_mgr, configured) = {
         let conns = state.connections.read().map_err(|e| e.to_string())?;
-        conns
-            .get(connection_id)
-            .ok_or("Connection not found")?
-            .subscription_mgr
-            .clone()
+        let entry = conns.get(connection_id).ok_or("Connection not found")?;
+        (
+            entry.subscription_mgr.clone(),
+            entry.pending_subscriptions.clone(),
+        )
     };
 
     let current_seq = sub_mgr.get_update_seq().await;
@@ -1133,7 +1212,11 @@ pub(crate) async fn get_monitored_nodes_since_impl(
     Ok(MonitoredSnapshot {
         seq: current_seq,
         full,
-        nodes: nodes.into_iter().map(monitored_node_to_row).collect(),
+        nodes: if full {
+            merge_configured_nodes(configured, nodes)
+        } else {
+            nodes.into_iter().map(monitored_node_to_row).collect()
+        },
     })
 }
 
@@ -1155,20 +1238,15 @@ pub async fn get_polling_nodes(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<Vec<MonitoredRow>, String> {
-    let poll_mgr = {
+    let (poll_mgr, configured) = {
         let conns = state.connections.read().map_err(|e| e.to_string())?;
-        conns
-            .get(&connection_id)
-            .ok_or("Connection not found")?
-            .polling_mgr
-            .clone()
+        let entry = conns.get(&connection_id).ok_or("Connection not found")?;
+        (entry.polling_mgr.clone(), entry.pending_polling.clone())
     };
-    Ok(poll_mgr
-        .get_polling_nodes()
-        .await
-        .into_iter()
-        .map(monitored_node_to_row)
-        .collect())
+    Ok(merge_configured_nodes(
+        configured,
+        poll_mgr.get_polling_nodes().await,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1471,6 +1549,10 @@ pub fn delete_certificate(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn create_group(state: State<'_, AppState>, name: String) -> Result<Vec<NodeGroupDto>, String> {
+    create_group_impl(state.inner(), name)
+}
+
+fn create_group_impl(state: &AppState, name: String) -> Result<Vec<NodeGroupDto>, String> {
     let id = Uuid::new_v4().to_string();
     {
         let mut groups = state.groups.write().map_err(|e| e.to_string())?;
@@ -1480,22 +1562,36 @@ pub fn create_group(state: State<'_, AppState>, name: String) -> Result<Vec<Node
             node_ids: Vec::new(),
         });
     }
-    list_groups_impl(state.inner())
+    state.autosave()?;
+    list_groups_impl(state)
 }
 
 #[tauri::command]
 pub fn delete_group(state: State<'_, AppState>, id: String) -> Result<Vec<NodeGroupDto>, String> {
+    delete_group_impl(state.inner(), &id)
+}
+
+fn delete_group_impl(state: &AppState, id: &str) -> Result<Vec<NodeGroupDto>, String> {
     {
         let mut groups = state.groups.write().map_err(|e| e.to_string())?;
         groups.retain(|g| g.id != id);
     }
-    list_groups_impl(state.inner())
+    state.autosave()?;
+    list_groups_impl(state)
 }
 
 #[tauri::command]
 pub fn add_to_group(
     state: State<'_, AppState>,
     group_id: String,
+    node_ids: Vec<String>,
+) -> Result<Vec<NodeGroupDto>, String> {
+    add_to_group_impl(state.inner(), &group_id, node_ids)
+}
+
+fn add_to_group_impl(
+    state: &AppState,
+    group_id: &str,
     node_ids: Vec<String>,
 ) -> Result<Vec<NodeGroupDto>, String> {
     {
@@ -1510,7 +1606,8 @@ pub fn add_to_group(
             }
         }
     }
-    list_groups_impl(state.inner())
+    state.autosave()?;
+    list_groups_impl(state)
 }
 
 #[tauri::command]
@@ -1524,72 +1621,44 @@ pub fn list_groups(state: State<'_, AppState>) -> Result<Vec<NodeGroupDto>, Stri
 
 #[tauri::command]
 pub async fn save_project(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    let (conn_entries, groups_snapshot) = {
-        let conns = state.connections.read().map_err(|e| e.to_string())?;
-        let groups = state.groups.read().map_err(|e| e.to_string())?;
-        let conn_data: Vec<ConnectionProjectEntry> = conns
-            .values()
-            .map(|entry| {
-                let c = &entry.connection.config;
-                ConnectionProjectEntry {
-                    name: c.name.clone(),
-                    endpoint_url: c.endpoint_url.clone(),
-                    security_policy: c.security_policy.clone(),
-                    security_mode: c.security_mode.clone(),
-                    auth: c.auth.clone(),
-                    timeout_ms: c.timeout_ms,
-                    monitored_nodes: Vec::new(),
-                }
-            })
-            .collect();
-        (conn_data, groups.clone())
-    };
+    save_project_impl(state.inner(), &path)
+}
 
-    let mut project = ProjectFile::new_master();
-    project.connections = conn_entries;
-    project.groups = groups_snapshot;
-    let json = project.to_json().map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| e.to_string())
+fn save_project_impl(state: &AppState, path: &str) -> Result<(), String> {
+    crate::project::write_atomic(
+        std::path::Path::new(path),
+        &crate::project::snapshot(state)?,
+    )
 }
 
 #[tauri::command]
 pub async fn load_project(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let project = ProjectFile::from_json(&json).map_err(|e| e.to_string())?;
+    load_project_impl(state.inner(), &path).await
+}
 
-    {
-        let mut conns = state.connections.write().map_err(|e| e.to_string())?;
-        conns.clear();
-        for ce in &project.connections {
-            let id = Uuid::new_v4().to_string();
-            let config = ConnectionConfig {
-                id: id.clone(),
-                name: ce.name.clone(),
-                endpoint_url: ce.endpoint_url.clone(),
-                security_policy: ce.security_policy.clone(),
-                security_mode: ce.security_mode.clone(),
-                auth: ce.auth.clone(),
-                timeout_ms: ce.timeout_ms,
-            };
-            let connection = Arc::new(OpcUaConnection::new(config));
-            let session_holder = connection.get_session_holder();
-            conns.insert(
-                id,
-                ConnectionEntry {
-                    connection,
-                    subscription_mgr: SubscriptionManager::new(),
-                    polling_mgr: Arc::new(PollingManager::new(session_holder)),
-                    pending_subscriptions: Vec::new(),
-                    pending_polling: Vec::new(),
-                },
-            );
-        }
+async fn load_project_impl(state: &AppState, path: &str) -> Result<(), String> {
+    // Validate before changing or disconnecting the current workspace.
+    let project = crate::project::read(std::path::Path::new(path))?;
+    let runtimes: Vec<_> = {
+        let conns = state.connections.read().map_err(|e| e.to_string())?;
+        conns
+            .values()
+            .map(|entry| (entry.connection.clone(), entry.polling_mgr.clone()))
+            .collect()
+    };
+    for (connection, polling) in runtimes {
+        let _ = connection.disconnect().await;
+        polling.stop_all().await;
     }
-    {
-        let mut groups = state.groups.write().map_err(|e| e.to_string())?;
-        *groups = project.groups;
-    }
-    Ok(())
+    crate::project::apply(state, project)?;
+    state.autosave()
+}
+
+#[tauri::command]
+pub fn get_persistence_status(
+    state: State<'_, AppState>,
+) -> Result<crate::project::PersistenceStatus, String> {
+    state.persistence_status()
 }
 
 // ---------------------------------------------------------------------------
@@ -1672,6 +1741,173 @@ mod tests {
     use std::time::Duration;
 
     const TEST_PORT: u16 = 49501;
+
+    fn test_connection_request() -> CreateConnectionRequest {
+        CreateConnectionRequest {
+            name: "Original".into(),
+            endpoint_url: "opc.tcp://localhost:4840".into(),
+            security_policy: "None".into(),
+            security_mode: "None".into(),
+            auth: AuthRequest::Anonymous,
+            timeout_ms: 5_000,
+        }
+    }
+
+    #[tokio::test]
+    async fn autosave_restores_configuration_and_keeps_deletions() {
+        let dir = std::env::temp_dir().join(format!("opcua-autosave-{}", Uuid::new_v4()));
+        let path = dir.join("last-session.opcuaproj");
+        let state = AppState::new();
+        state.initialize_persistence(path.clone()).unwrap();
+        let conn = create_connection_impl(&state, test_connection_request()).unwrap();
+        add_monitored_nodes_impl(
+            &state,
+            &conn.id,
+            vec![
+                MonitoredNodeReq {
+                    node_id: "ns=2;s=Sine".into(),
+                    display_name: "正弦".into(),
+                    data_type: Some("Double".into()),
+                    access_mode: "Subscription".into(),
+                    interval_ms: 250.0,
+                    filter: Some(DataChangeFilterReq {
+                        trigger: DataChangeTriggerKindReq::StatusValue,
+                        deadband_kind: DeadbandKindReq::Absolute,
+                        deadband_value: 0.5,
+                    }),
+                },
+                MonitoredNodeReq {
+                    node_id: "ns=2;s=Static".into(),
+                    display_name: "轮询".into(),
+                    data_type: Some("Int32".into()),
+                    access_mode: "Polling".into(),
+                    interval_ms: 750.0,
+                    filter: None,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+        // Updating a node must replace its saved configuration rather than append duplicates.
+        add_monitored_nodes_impl(
+            &state,
+            &conn.id,
+            vec![MonitoredNodeReq {
+                node_id: "ns=2;s=Static".into(),
+                display_name: "轮询".into(),
+                data_type: Some("Int32".into()),
+                access_mode: "Polling".into(),
+                interval_ms: 800.0,
+                filter: None,
+            }],
+        )
+        .await
+        .unwrap();
+        let group = create_group_impl(&state, "风机".into()).unwrap()[0]
+            .id
+            .clone();
+        add_to_group_impl(&state, &group, vec!["ns=2;s=Sine".into()]).unwrap();
+        rename_connection_impl(&state, &conn.id, "自动保存的连接").unwrap();
+
+        let restored = AppState::new();
+        restored.initialize_persistence(path.clone()).unwrap();
+        let infos = list_connections_impl(&restored).await.unwrap();
+        assert_eq!(infos[0].id, conn.id);
+        assert_eq!(infos[0].name, "自动保存的连接");
+        assert_eq!(infos[0].state, "Disconnected");
+        let offline = get_monitored_nodes_since_impl(&restored, &conn.id, 0)
+            .await
+            .unwrap();
+        assert_eq!(offline.nodes.len(), 1);
+        assert_eq!(offline.nodes[0].display_name, "正弦");
+        assert!(offline.nodes[0].value.is_none());
+        {
+            let conns = restored.connections.read().unwrap();
+            let entry = &conns[&conn.id];
+            assert_eq!(
+                entry.pending_subscriptions[0]
+                    .filter
+                    .unwrap()
+                    .deadband_value,
+                0.5
+            );
+            assert_eq!(entry.pending_polling.len(), 1);
+            assert!(matches!(
+                entry.pending_polling[0].access_mode,
+                AccessMode::Polling { interval_ms: 800 }
+            ));
+        }
+        assert_eq!(
+            list_groups_impl(&restored).unwrap()[0].node_ids,
+            vec!["ns=2;s=Sine"]
+        );
+
+        remove_monitored_nodes_impl(&restored, &conn.id, &["ns=2;s=Sine".into()])
+            .await
+            .unwrap();
+        delete_group_impl(&restored, &group).unwrap();
+        let saved = crate::project::read(&path).unwrap();
+        assert_eq!(saved.connections[0].monitored_nodes.len(), 1);
+        assert_eq!(
+            saved.connections[0].monitored_nodes[0].node_id,
+            "ns=2;s=Static"
+        );
+        assert!(saved.groups.is_empty());
+        delete_connection_impl(&restored, &conn.id).await.unwrap();
+        assert!(crate::project::read(&path).unwrap().connections.is_empty());
+        let polling = state.connections.read().unwrap()[&conn.id]
+            .polling_mgr
+            .clone();
+        polling.stop_all().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rename_connection_preserves_runtime_and_project_name() {
+        let state = AppState::new();
+        let conn = create_connection_impl(
+            &state,
+            CreateConnectionRequest {
+                name: "Original".into(),
+                endpoint_url: "opc.tcp://localhost:4840".into(),
+                security_policy: "None".into(),
+                security_mode: "None".into(),
+                auth: AuthRequest::Anonymous,
+                timeout_ms: 5_000,
+            },
+        )
+        .unwrap();
+        let runtime = state.connections.read().unwrap()[&conn.id]
+            .connection
+            .clone();
+        // A rename must work while connected without replacing the live runtime.
+        *runtime.state.write().await = ConnectionState::Connected;
+        rename_connection_impl(&state, &conn.id, "  风机采集  ").unwrap();
+        assert!(Arc::ptr_eq(
+            &runtime,
+            &state.connections.read().unwrap()[&conn.id].connection
+        ));
+        let infos = list_connections_impl(&state).await.unwrap();
+        assert_eq!(infos[0].name, "风机采集");
+        assert_eq!(infos[0].state, "Connected");
+        assert_eq!(infos[0].endpoint_url, conn.endpoint_url);
+        assert!(rename_connection_impl(&state, &conn.id, " \t ").is_err());
+        assert!(rename_connection_impl(&state, "missing", "Name").is_err());
+        assert_eq!(
+            list_connections_impl(&state).await.unwrap()[0].name,
+            "风机采集"
+        );
+
+        let path = std::env::temp_dir().join(format!("rename-{}.opcuaproj", Uuid::new_v4()));
+        let path_str = path.to_str().unwrap();
+        save_project_impl(&state, path_str).unwrap();
+        let restored = AppState::new();
+        load_project_impl(&restored, path_str).await.unwrap();
+        std::fs::remove_file(path).unwrap();
+        let restored_infos = list_connections_impl(&restored).await.unwrap();
+        assert_eq!(restored_infos[0].name, "风机采集");
+        assert_eq!(restored_infos[0].endpoint_url, conn.endpoint_url);
+    }
 
     #[test]
     fn parse_iso_to_datetime_accepts_rfc3339_and_rejects_garbage() {
@@ -1865,6 +2101,15 @@ mod tests {
             "monitored Sine node never reported a value",
         )?;
 
+        rename_connection_impl(&state, &conn.id, "Live renamed connection")?;
+        let renamed = list_connections_impl(&state).await?;
+        ensure(
+            renamed.iter().any(|c| {
+                c.id == conn.id && c.name == "Live renamed connection" && c.state == "Connected"
+            }),
+            "rename should retain the connected session",
+        )?;
+
         let attrs = read_attributes_impl(&state, &conn.id, "ns=2;s=Demo.Static").await?;
         ensure(attrs.value.is_some(), "Static node should have a value")?;
         ensure(
@@ -1941,6 +2186,78 @@ mod tests {
         )?;
 
         Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn e2e_restored_workspace_resumes_subscription_and_polling() {
+        let server = Arc::new(OpcUaServer::new());
+        server
+            .start(&server_config(TEST_PORT + 1), &e2e_folders(), &e2e_nodes())
+            .await
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!("opcua-restart-{}", Uuid::new_v4()));
+        let path = dir.join("last-session.opcuaproj");
+        let original = AppState::new();
+        original.initialize_persistence(path.clone()).unwrap();
+        let mut request = test_connection_request();
+        request.endpoint_url = format!("opc.tcp://127.0.0.1:{}", TEST_PORT + 1);
+        let conn = create_connection_impl(&original, request).unwrap();
+        add_monitored_nodes_impl(
+            &original,
+            &conn.id,
+            vec![
+                MonitoredNodeReq {
+                    node_id: "ns=2;s=Demo.Sine".into(),
+                    display_name: "Sine".into(),
+                    data_type: Some("Double".into()),
+                    access_mode: "Subscription".into(),
+                    interval_ms: 100.0,
+                    filter: None,
+                },
+                MonitoredNodeReq {
+                    node_id: "ns=2;s=Demo.Static".into(),
+                    display_name: "Static".into(),
+                    data_type: Some("Double".into()),
+                    access_mode: "Polling".into(),
+                    interval_ms: 100.0,
+                    filter: None,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+        let original_polling = original.connections.read().unwrap()[&conn.id]
+            .polling_mgr
+            .clone();
+        original_polling.stop_all().await;
+        let restored = AppState::new();
+        restored.initialize_persistence(path).unwrap();
+        connect_impl(&restored, &conn.id, |_| {}).await.unwrap();
+        let polling = restored.connections.read().unwrap()[&conn.id]
+            .polling_mgr
+            .clone();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let mut received = false;
+        while tokio::time::Instant::now() < deadline {
+            let sub = get_monitored_nodes_since_impl(&restored, &conn.id, 0)
+                .await
+                .unwrap();
+            let poll = polling.get_polling_nodes().await;
+            if sub.nodes.iter().any(|n| n.value.is_some()) && poll.iter().any(|n| n.value.is_some())
+            {
+                received = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        disconnect_impl(&restored, &conn.id).await.unwrap();
+        polling.stop_all().await;
+        server.stop().await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        assert!(
+            received,
+            "restored subscription and polling must both receive live values"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

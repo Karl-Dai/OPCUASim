@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 /// Per-connection runtime state. Mirrors the legacy egui `ConnectionEntry`.
 pub struct ConnectionEntry {
+    /// Editable display name, independent of the live connection configuration.
+    pub name: String,
     pub connection: Arc<OpcUaConnection>,
     pub subscription_mgr: SubscriptionManager,
     pub polling_mgr: Arc<PollingManager>,
@@ -29,6 +31,7 @@ pub struct ConnectionEntry {
 pub struct AppState {
     pub connections: RwLock<HashMap<String, ConnectionEntry>>,
     pub groups: RwLock<Vec<NodeGroup>>,
+    pub persistence: std::sync::Mutex<crate::project::Persistence>,
 }
 
 impl AppState {

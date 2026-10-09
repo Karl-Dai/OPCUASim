@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_store::StoreExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
 use tokio::sync::Mutex;
@@ -11,6 +11,26 @@ const KEY_SKIPPED_VERSION: &str = "skipped_version";
 const KEY_INSTALL_ON_NEXT_LAUNCH: &str = "install_on_next_launch";
 const KEY_INSTALL_ID: &str = "install_id";
 const THROTTLE_HOURS: i64 = 6;
+const CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+#[derive(Clone, Serialize)]
+struct UpdateProgress {
+    stage: &'static str,
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+fn progress(app: &AppHandle, stage: &'static str, downloaded: u64, total: Option<u64>) {
+    let _ = app.emit(
+        "update-progress",
+        UpdateProgress {
+            stage,
+            downloaded,
+            total,
+        },
+    );
+}
 
 #[derive(Serialize, Clone)]
 pub struct UpdateMeta {
@@ -83,6 +103,7 @@ fn install_id(app: &AppHandle) -> String {
 
 fn build_updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
     app.updater_builder()
+        .timeout(std::time::Duration::from_secs(10))
         .header("X-Install-Id", install_id(app))
         .map_err(|e| e.to_string())?
         .build()
@@ -97,16 +118,41 @@ fn update_meta(update: &Update) -> UpdateMeta {
     }
 }
 
-async fn download_update(update: &Update) -> Result<Vec<u8>, String> {
-    update
-        .download(
-            |_, _| {},
+async fn find_update(app: &AppHandle) -> Result<Option<Update>, String> {
+    log::info!("checking OPCUAMaster release updates");
+    progress(app, "checking", 0, None);
+    tokio::time::timeout(CHECK_TIMEOUT, build_updater(app)?.check())
+        .await
+        .map_err(|_| "Update check timed out".to_string())?
+        .map_err(|e| e.to_string())
+}
+
+async fn download_update(app: &AppHandle, update: &mut Update) -> Result<Vec<u8>, String> {
+    update.timeout = Some(DOWNLOAD_TIMEOUT);
+    let mut downloaded = 0;
+    let mut last_emit = std::time::Instant::now();
+    progress(app, "downloading", 0, None);
+    tokio::time::timeout(
+        DOWNLOAD_TIMEOUT,
+        update.download(
+            |chunk, total| {
+                downloaded += chunk as u64;
+                if last_emit.elapsed() >= std::time::Duration::from_millis(100)
+                    || total == Some(downloaded)
+                {
+                    progress(app, "downloading", downloaded, total);
+                    last_emit = std::time::Instant::now();
+                }
+            },
             || {
+                progress(app, "verifying", 0, None);
                 log::info!("update download finished; verifying release signature");
             },
-        )
-        .await
-        .map_err(|e| e.to_string())
+        ),
+    )
+    .await
+    .map_err(|_| "Update download timed out".to_string())?
+    .map_err(|e| e.to_string())
 }
 
 // `force = true` (toolbar button) bypasses the 6h throttle and a skipped
@@ -139,13 +185,12 @@ pub async fn check_for_update(
             return Ok(None);
         }
     }
-    write_str(&app, KEY_LAST_CHECK, &now.to_rfc3339());
-
-    let updater = build_updater(&app)?;
     // Surface fetch / parse / download failures to the caller so a manual
-    // check can distinguish them from "already latest". Startup checks log
-    // and suppress those failures in the frontend.
-    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+    // check can distinguish them from "already latest". Automatic checks show
+    // a retryable toolbar status without interrupting collection with an alert.
+    let Some(mut update) = find_update(&app).await? else {
+        log::info!("OPCUAMaster is up to date");
+        write_str(&app, KEY_LAST_CHECK, &now.to_rfc3339());
         return Ok(None);
     };
 
@@ -155,27 +200,32 @@ pub async fn check_for_update(
             &update.version,
         )
     {
+        write_str(&app, KEY_LAST_CHECK, &now.to_rfc3339());
         return Ok(None);
     }
 
     let meta = update_meta(&update);
-    let bytes = download_update(&update).await?;
+    let bytes = download_update(&app, &mut update).await?;
     *prepared = Some(PreparedUpdate {
         meta: meta.clone(),
         update,
         bytes,
     });
+    write_str(&app, KEY_LAST_CHECK, &now.to_rfc3339());
+    progress(&app, "ready", 0, None);
     Ok(Some(meta))
 }
 
 /// Installs the already downloaded package. No network request is made here.
 #[tauri::command]
 pub async fn install_update(app: AppHandle, state: State<'_, UpdateState>) -> Result<(), String> {
+    ensure_installable()?;
     let prepared = state.prepared.lock().await;
     let update = prepared
         .as_ref()
         .ok_or_else(|| "update package is not ready".to_string())?;
 
+    progress(&app, "installing", 0, None);
     update
         .update
         .install(&update.bytes)
@@ -215,6 +265,7 @@ pub async fn schedule_update_on_next_launch(
     state: State<'_, UpdateState>,
     version: String,
 ) -> Result<(), String> {
+    ensure_installable()?;
     let prepared = state.prepared.lock().await;
     if !prepared
         .as_ref()
@@ -233,17 +284,17 @@ pub async fn install_pending_update(app: AppHandle) -> Result<(), String> {
     if !read_bool(&app, KEY_INSTALL_ON_NEXT_LAUNCH) {
         return Ok(());
     }
+    ensure_installable()?;
 
     let state = app.state::<UpdateState>();
     let mut prepared = state.prepared.lock().await;
-    let updater = build_updater(&app)?;
-    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+    let Some(mut update) = find_update(&app).await? else {
         remove_value(&app, KEY_INSTALL_ON_NEXT_LAUNCH);
         return Ok(());
     };
 
     let meta = update_meta(&update);
-    let bytes = download_update(&update).await?;
+    let bytes = download_update(&app, &mut update).await?;
     *prepared = Some(PreparedUpdate {
         meta,
         update,
@@ -252,6 +303,7 @@ pub async fn install_pending_update(app: AppHandle) -> Result<(), String> {
     let ready = prepared
         .as_ref()
         .expect("prepared update was just inserted");
+    progress(&app, "installing", 0, None);
     ready
         .update
         .install(&ready.bytes)
@@ -261,6 +313,21 @@ pub async fn install_pending_update(app: AppHandle) -> Result<(), String> {
     remove_value(&app, KEY_INSTALL_ON_NEXT_LAUNCH);
     drop(prepared);
     app.restart()
+}
+
+fn ensure_installable() -> Result<(), String> {
+    if cfg!(debug_assertions) {
+        return Err(
+            "Development builds cannot install release updates; use the packaged application"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn can_install_update() -> bool {
+    !cfg!(debug_assertions)
 }
 
 pub fn should_check(

@@ -13,6 +13,8 @@ Cross-platform OPC UA simulation suite — desktop apps built with **Rust** · *
 
 ### OPCUAMaster — Client / Master Station
 
+- **Automatic updates** — checks on startup, with a manual toolbar check and download progress. After signature verification, choose to install now, install on next launch, or skip the version. Successful automatic checks are limited to once every 6 hours; development builds support checking only, while installation requires a packaged app.
+
 - **OPC UA DA** — connect to any OPC UA server, browse address space, read/write values
 - **Security** — None / Sign / SignAndEncrypt; Anonymous, Username/Password, Certificate auth
 - **Endpoint discovery** — query a server URL to enumerate available endpoints and their security profiles
@@ -25,6 +27,7 @@ Cross-platform OPC UA simulation suite — desktop apps built with **Rust** · *
 - **Method calls** — auto-discover input/output arguments and invoke methods from the browser
 - **Communication log** — bottom panel with direction filter, search, CSV export
 - **Project files** — save/load all connections + groups as `.opcuaproj`
+- **Autosave and restore** — connection names/settings, monitored nodes, subscription/polling intervals, filters and groups are saved after changes and restored on startup. Connect to resume acquisition; manual project files also include monitored nodes.
 - **Certificate manager** — list, trust/reject, delete certificates in the local PKI
 
 ### OPCUAServer — Address-Space Simulator

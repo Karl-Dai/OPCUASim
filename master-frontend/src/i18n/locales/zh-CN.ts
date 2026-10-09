@@ -1,4 +1,26 @@
 export type DictShape = {
+  update: {
+    check: string
+    hint: string
+    checking: string
+    downloading: string
+    downloadPercent: string
+    verifying: string
+    ready: string
+    installing: string
+    saving: string
+    latest: string
+    failed: string
+    scheduled: string
+    title: string
+    verified: string
+    devBuild: string
+    errorDetail: string
+    later: string
+    skip: string
+    nextLaunch: string
+    install: string
+  }
   common: {
     confirm: string
     cancel: string
@@ -37,6 +59,12 @@ export type DictShape = {
     connect: string
     disconnect: string
     newConnection: string
+    renameConnection: string
+    renamePrompt: string
+    renameFailed: string
+    autoSave: string
+    autoSaveFailed: string
+    autoSaveHint: string
     deleteConnection: string
     refresh: string
     saveProject: string
@@ -262,6 +290,28 @@ export type DictShape = {
 }
 
 const dict: DictShape = {
+  update: {
+    check: '检查更新',
+    hint: '启动时自动检查更新；点击可立即检查',
+    checking: '检查中…',
+    downloading: '下载更新中…',
+    downloadPercent: '下载更新 {percent}%',
+    verifying: '校验更新中…',
+    ready: '更新 v{version}',
+    installing: '安装中…',
+    saving: '保存中…',
+    latest: '已是最新版本',
+    failed: '更新检查失败，重试',
+    scheduled: '下次启动安装',
+    title: 'v{version} 已准备就绪',
+    verified: '更新包已下载并通过签名校验。立即安装将重启程序并中断当前采集。',
+    devBuild: '当前为开发版，可检查更新；请使用打包后的正式应用进行自动安装。',
+    errorDetail: '更新失败：{error}',
+    later: '稍后提醒',
+    skip: '跳过此版本',
+    nextLaunch: '下次启动安装',
+    install: '立即安装并重启',
+  },
   common: {
     confirm: '确认',
     cancel: '取消',
@@ -300,6 +350,12 @@ const dict: DictShape = {
     connect: '连接',
     disconnect: '断开',
     newConnection: '新建连接',
+    renameConnection: '重命名',
+    renamePrompt: '输入新的连接名称',
+    renameFailed: '重命名失败：{error}',
+    autoSave: '自动保存',
+    autoSaveFailed: '自动保存异常',
+    autoSaveHint: '连接、采集节点和分组会自动保存，启动时自动恢复',
     deleteConnection: '删除',
     refresh: '刷新',
     saveProject: '保存',

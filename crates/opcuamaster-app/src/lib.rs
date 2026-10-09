@@ -1,8 +1,10 @@
 mod commands;
+mod project;
 mod state;
 pub mod update;
 
 use state::AppState;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,6 +19,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::create_connection,
+            commands::rename_connection,
             commands::connect,
             commands::disconnect,
             commands::delete_connection,
@@ -48,15 +51,28 @@ pub fn run() {
             commands::list_groups,
             commands::save_project,
             commands::load_project,
+            commands::get_persistence_status,
             commands::get_communication_logs,
             commands::clear_communication_logs,
             commands::export_communication_logs,
             update::check_for_update,
+            update::can_install_update,
             update::install_update,
             update::skip_update,
             update::schedule_update_on_next_launch,
         ])
         .setup(|app| {
+            let state = app.state::<AppState>();
+            match app.path().app_data_dir() {
+                Ok(dir) => {
+                    if let Err(error) =
+                        state.initialize_persistence(dir.join("last-session.opcuaproj"))
+                    {
+                        log::warn!("automatic project restore failed: {error}");
+                    }
+                }
+                Err(error) => state.report_persistence_error(error.to_string()),
+            }
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

@@ -8,12 +8,16 @@ import LangSwitch from '@shared/components/LangSwitch.vue'
 import VersionBadge from '@shared/components/VersionBadge.vue'
 import NewConnectionDialog from './NewConnectionDialog.vue'
 import CertManagerDialog from './CertManagerDialog.vue'
+import UpdateControl from './UpdateControl.vue'
 import { useMasterContext } from '../inject'
+import { useConnectionRename } from '../useConnectionRename'
 import type { ConnectionInfo, DiscoveredEndpointDto } from '../types'
 
 const { t } = useI18n()
+const { requestRename, renaming } = useConnectionRename()
 const {
   selectedConnectionId,
+  persistenceStatus,
   selectedConnection,
   connect,
   disconnect,
@@ -171,6 +175,11 @@ function onCreated(conn: ConnectionInfo) {
 
         <button class="toolbar-btn" @click="newConnVisible = true">{{ t('toolbar.newConnection') }}</button>
         <button
+          class="toolbar-btn"
+          :disabled="!hasSelection || renaming"
+          @click="selectedConnection && requestRename(selectedConnection)"
+        >{{ t('toolbar.renameConnection') }}</button>
+        <button
           class="toolbar-btn btn-start"
           :disabled="!hasSelection || isConnected || isConnecting"
           @click="onConnect"
@@ -195,6 +204,14 @@ function onCreated(conn: ConnectionInfo) {
         <button class="toolbar-btn" @click="certVisible = true">🔐 {{ t('toolbar.certManager') }}</button>
       </div>
       <div class="toolbar-aside">
+        <UpdateControl />
+        <span
+          class="persistence-status"
+          :class="{ 'persistence-error': persistenceStatus.error }"
+          :title="persistenceStatus.error || t('toolbar.autoSaveHint')"
+          role="status"
+          aria-live="polite"
+        >{{ persistenceStatus.error ? t('toolbar.autoSaveFailed') : persistenceStatus.enabled ? t('toolbar.autoSave') : '' }}</span>
         <LangSwitch />
         <VersionBadge />
       </div>
@@ -210,6 +227,17 @@ function onCreated(conn: ConnectionInfo) {
   background: var(--c-base);
   border-bottom: 1px solid var(--c-surface0);
   user-select: none;
+}
+
+.persistence-status {
+  color: var(--c-overlay1);
+  font-size: 12px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.persistence-error {
+  color: var(--c-red);
 }
 
 .chip {

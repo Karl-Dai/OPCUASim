@@ -43,6 +43,11 @@ export interface ConnectionInfo {
   state: string
 }
 
+export interface PersistenceStatus {
+  enabled: boolean
+  error: string | null
+}
+
 export interface BrowseItem {
   node_id: string
   display_name: string
