@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-09
+
+### Highlights / 亮点
+
+- **连接名称可编辑**：工具栏重命名或双击连接名称即可修改，无需断开正在采集的连接。 / Rename connections from the toolbar or by double-clicking their names without interrupting live acquisition.
+- **采集配置自动保存与恢复**：连接、监控节点、订阅/轮询间隔、过滤条件和分组自动保存；启动后恢复配置，点击连接即可继续采集。 / Connections, monitored nodes, intervals, filters and groups are saved automatically and restored on startup; reconnect to resume acquisition.
+- **主站自动更新入口恢复**：启动检查新版本、显示下载进度，签名校验后可选择立即安装、下次启动安装或跳过。 / Master checks for updates on startup and displays download progress, with install-now, next-launch and skip choices after signature verification.
+
+### Added 新增
+
+- 主站工具栏增加自动保存状态和更新检查入口；自动保存失败、更新失败可见并可重试。 / Master toolbar displays autosave status and update controls, including visible persistence and update failures.
+- 自动保存采用原子文件替换；损坏的恢复文件保留备份，项目文件兼容旧格式。 / Autosave uses atomic file replacement, backs up corrupt recovery files and accepts legacy project files.
+
+### Fixed 修复
+
+- 修复手动保存项目未包含监控节点的问题；保存和恢复稳定连接 ID、节点元数据、采集模式与过滤配置。 / Manual projects now include monitored nodes, stable connection IDs, node metadata, access modes and filters.
+- 修复主站更新后端未接入界面的问题；检查失败不再被视为已是最新版本。 / Connect the existing updater backend to the Master UI and distinguish check failures from an up-to-date result.
+- 更新清单每个源超时 10 秒、检查总超时 30 秒、下载超时 5 分钟；成功的自动检查每 6 小时最多一次。 / Bound update requests to 10 seconds per endpoint, 30 seconds per check and 5 minutes per download; successful automatic checks are throttled to once per 6 hours.
+
+### Documentation 文档
+
+- 补充主站重命名、自动保存和更新使用说明，以及服务端 CSV 点表导入设计；CSV 点表实现不包含在本版本中。 / Document Master persistence and updates and the Server CSV point-table design; the CSV implementation is not part of this release.
+
+### Tests 测试
+
+- 主站前端 17 项测试覆盖重命名、离线恢复、更新进度、安装选择与失败重试；主站后端 12 项测试包含真实 OPC UA 订阅与轮询恢复。 / 17 Master frontend tests cover renaming, offline restoration, updater progress, installation choices and retry; 12 Master backend tests include recovery against a real OPC UA server.
+
+### Notes 说明
+
+- 恢复配置不会自动连接服务器；需要点击“连接”。旧项目中未保存的监控节点需重新添加一次。 / Restoring a workspace does not automatically connect; click Connect. Monitored nodes absent from an old project must be added once.
+- 开发版可检查更新，自动安装需使用打包后的应用。 / Development builds can check for updates; installation requires a packaged application.
+
 ## [0.7.0] - 2026-08-14
 
 ### Highlights / 亮点

@@ -92,7 +92,7 @@ export function buildBody(tag, changelog) {
   lines.push('')
   lines.push('---')
   lines.push('')
-  lines.push(`完整变更历史 / Full changelog: [CHANGELOG.md](${REPO_URL}/blob/main/CHANGELOG.md)`)
+  lines.push(`完整变更历史 / Full changelog: [CHANGELOG.md](${REPO_URL}/blob/master/CHANGELOG.md)`)
   lines.push('')
   lines.push(`之前版本 / Previous releases: <${REPO_URL}/releases>`)
   return lines.join('\n')

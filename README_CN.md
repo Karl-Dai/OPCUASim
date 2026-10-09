@@ -84,7 +84,7 @@ OPCUASim/
 
 ## 更新日志
 
-详见 [CHANGELOG.md](CHANGELOG.md) 与 [Releases](https://github.com/kelsoprotein-lab/OPCUASim/releases) 页面。
+详见 [CHANGELOG.md](CHANGELOG.md) 与 [Releases](https://github.com/Karl-Dai/OPCUASim/releases) 页面。
 
 ## macOS 首次启动
 

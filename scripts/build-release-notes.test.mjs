@@ -47,7 +47,7 @@ describe('buildBody', () => {
   })
   it('keeps the footer with full-changelog and releases links', () => {
     const body = buildBody('v1.2.3', md)
-    expect(body).toContain('blob/main/CHANGELOG.md')
+    expect(body).toContain('blob/master/CHANGELOG.md')
     expect(body).toContain('/releases>')
   })
   it('includes the macOS first-launch guidance block', () => {

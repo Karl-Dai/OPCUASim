@@ -84,7 +84,7 @@ OPCUASim/
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) and the [Releases](https://github.com/kelsoprotein-lab/OPCUASim/releases) page.
+See [CHANGELOG.md](CHANGELOG.md) and the [Releases](https://github.com/Karl-Dai/OPCUASim/releases) page.
 
 ## macOS First Launch
 
