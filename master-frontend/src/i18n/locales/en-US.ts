@@ -50,6 +50,8 @@ const dict: DictShape = {
   },
   app: {
     title: 'OPCUA Master',
+    resizeTree: 'Resize node tree',
+    resizeTreeHint: 'Drag to resize; double-click to reset; use arrow keys to adjust',
   },
   state: {
     connected: 'Connected',

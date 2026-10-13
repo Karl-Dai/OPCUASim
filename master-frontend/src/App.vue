@@ -58,6 +58,60 @@ const activeTab = ref<CentralTab>('data')
 const historyTarget = ref<HistoryTarget | null>(null)
 const logExpanded = ref(false)
 
+const TREE_MIN_WIDTH = 200
+const TREE_DEFAULT_WIDTH = 300
+const treeWidth = ref(TREE_DEFAULT_WIDTH)
+const viewportWidth = ref(window.innerWidth)
+const treeMaxWidth = computed(() => Math.max(TREE_MIN_WIDTH, Math.min(720, viewportWidth.value - 320 - 360 - 8)))
+const resizingTree = ref(false)
+let treeDrag: { pointerId: number; startX: number; startWidth: number } | null = null
+
+function setTreeWidth(width: number) {
+  treeWidth.value = Math.max(TREE_MIN_WIDTH, Math.min(treeMaxWidth.value, Math.round(width)))
+}
+
+function startTreeResize(event: PointerEvent) {
+  if (event.button !== 0 || treeDrag) return
+  event.preventDefault()
+  const handle = event.currentTarget as HTMLElement
+  handle.focus()
+  handle.setPointerCapture(event.pointerId)
+  treeDrag = { pointerId: event.pointerId, startX: event.clientX, startWidth: treeWidth.value }
+  resizingTree.value = true
+}
+
+function moveTreeResize(event: PointerEvent) {
+  if (!treeDrag || event.pointerId !== treeDrag.pointerId) return
+  setTreeWidth(treeDrag.startWidth + event.clientX - treeDrag.startX)
+}
+
+function stopTreeResize(event: PointerEvent) {
+  if (!treeDrag || event.pointerId !== treeDrag.pointerId) return
+  treeDrag = null
+  resizingTree.value = false
+  const handle = event.currentTarget as HTMLElement
+  if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId)
+}
+
+function resizeTreeWithKeyboard(event: KeyboardEvent) {
+  const step = event.shiftKey ? 50 : 10
+  const widths: Record<string, number> = {
+    ArrowLeft: treeWidth.value - step,
+    ArrowRight: treeWidth.value + step,
+    Home: TREE_MIN_WIDTH,
+    End: treeMaxWidth.value,
+  }
+  const width = widths[event.key]
+  if (width === undefined) return
+  event.preventDefault()
+  setTreeWidth(width)
+}
+
+function handleWindowResize() {
+  viewportWidth.value = window.innerWidth
+  setTreeWidth(treeWidth.value)
+}
+
 // ---------------------------------------------------------------------------
 // Backend actions
 // ---------------------------------------------------------------------------
@@ -256,6 +310,8 @@ let persistenceTimer: number | null = null
 let unlistenConnState: (() => void) | null = null
 
 onMounted(async () => {
+  handleWindowResize()
+  window.addEventListener('resize', handleWindowResize)
   await Promise.all([refreshConnections(), refreshGroups(), refreshPersistenceStatus()])
 
   unlistenConnState = await listen<{ id: string; state: string }>('connection-state', (event) => {
@@ -267,6 +323,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('resize', handleWindowResize)
   unlistenConnState?.()
   if (persistenceTimer !== null) clearInterval(persistenceTimer)
   if (monitorTimer !== null) {
@@ -318,14 +375,22 @@ const gridRows = computed(() => (logExpanded.value ? '42px 1fr 280px' : '42px 1f
 </script>
 
 <template>
-  <div class="app-layout" :style="{ gridTemplateRows: gridRows }">
+  <div class="app-layout" :class="{ 'resizing-tree': resizingTree }"
+    :style="{ gridTemplateRows: gridRows, gridTemplateColumns: `${treeWidth}px 8px minmax(0, 1fr) 320px` }">
     <header class="toolbar-area">
       <Toolbar />
     </header>
 
-    <aside class="tree-area">
+    <aside id="connection-tree" class="tree-area">
       <ConnectionTree />
     </aside>
+
+    <div class="tree-resizer" role="separator" tabindex="0" aria-orientation="vertical"
+      aria-controls="connection-tree" :aria-label="t('app.resizeTree')" :title="t('app.resizeTreeHint')"
+      :aria-valuemin="TREE_MIN_WIDTH" :aria-valuemax="treeMaxWidth" :aria-valuenow="treeWidth"
+      @pointerdown="startTreeResize" @pointermove="moveTreeResize"
+      @pointerup="stopTreeResize" @pointercancel="stopTreeResize" @lostpointercapture="stopTreeResize"
+      @keydown="resizeTreeWithKeyboard" @dblclick="setTreeWidth(TREE_DEFAULT_WIDTH)" />
 
     <main class="content-area">
       <div class="tab-bar">
@@ -413,11 +478,10 @@ body {
 
 .app-layout {
   display: grid;
-  grid-template-columns: 300px 1fr 320px;
   grid-template-areas:
-    'toolbar toolbar toolbar'
-    'tree content panel'
-    'log log log';
+    'toolbar toolbar toolbar toolbar'
+    'tree tree-resizer content panel'
+    'log log log log';
   height: 100vh;
   width: 100vw;
 }
@@ -432,13 +496,32 @@ body {
   grid-area: tree;
   background: var(--c-mantle);
   overflow: hidden;
-  border-right: 1px solid var(--c-surface0);
+  min-width: 0;
+}
+
+.tree-resizer {
+  grid-area: tree-resizer;
+  cursor: col-resize;
+  touch-action: none;
+  background: var(--c-mantle);
+  border-inline: 1px solid var(--c-surface0);
+}
+.tree-resizer:hover,
+.tree-resizer:focus-visible,
+.resizing-tree .tree-resizer {
+  background: var(--c-blue);
+}
+.resizing-tree,
+.resizing-tree * {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 .content-area {
   grid-area: content;
   background: var(--c-crust);
   overflow: hidden;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }

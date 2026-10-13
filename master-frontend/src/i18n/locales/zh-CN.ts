@@ -48,6 +48,8 @@ export type DictShape = {
   }
   app: {
     title: string
+    resizeTree: string
+    resizeTreeHint: string
   }
   state: {
     connected: string
@@ -339,6 +341,8 @@ const dict: DictShape = {
   },
   app: {
     title: 'OPCUA Master',
+    resizeTree: '调整节点树宽度',
+    resizeTreeHint: '左右拖动调整宽度；双击恢复默认；方向键微调',
   },
   state: {
     connected: '已连接',
