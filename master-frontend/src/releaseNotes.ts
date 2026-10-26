@@ -3,6 +3,8 @@ export const REPO_URL = 'https://github.com/Karl-Dai/OPCUASim'
 
 // Keep in sync with CHANGELOG.md — see `release` skill.
 export const RELEASE_NOTES: string[] = [
+  'v0.9.0 修复 / Fixed: master: make node tree sidebar resizable; ci: set GH_TOKEN for release PR creation in nightly workflow',
+  'v0.9.0 文档 / Documentation: refresh bilingual README with tutorials and screenshots',
   'v0.8.0 主站连接重命名：工具栏或双击名称修改，保留正在运行的采集连接',
   'v0.8.0 主站自动保存与恢复：连接、节点、间隔、过滤条件和分组自动保存，启动恢复后点击连接即可采集',
   'v0.8.0 主站自动更新：启动检查、下载进度和签名校验，支持立即安装、下次启动安装或跳过',
@@ -17,10 +19,9 @@ export const RELEASE_NOTES: string[] = [
 // Keep the complete release history above for release automation, while the
 // About dialog shows a concise, localized summary of the current release.
 export const ABOUT_RELEASE_NOTES = {
-  'zh-CN': RELEASE_NOTES.slice(0, 3),
+  'zh-CN': RELEASE_NOTES.slice(0, 2),
   'en-US': [
-    'v0.8.0 Master connection renaming: toolbar and double-click editing preserve active acquisition sessions.',
-    'v0.8.0 Master autosave and restore: persist connections, nodes, intervals, filters and groups; reconnect after startup to resume acquisition.',
-    'v0.8.0 Master automatic updates: startup checks, download progress and signature verification, with immediate, next-launch or skip choices.',
+    'v0.9.0 Fixed: master: make node tree sidebar resizable; ci: set GH_TOKEN for release PR creation in nightly workflow',
+    'v0.9.0 Documentation: refresh bilingual README with tutorials and screenshots',
   ],
 } as const
