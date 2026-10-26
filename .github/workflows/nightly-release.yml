@@ -119,6 +119,7 @@ jobs:
           LATEST_TAG: ${{ steps.release.outputs.latest_tag }}
           NEXT_VERSION: ${{ steps.release.outputs.next_version }}
           RELEASE_BRANCH: ${{ steps.release.outputs.branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
